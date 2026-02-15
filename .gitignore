@@ -1,0 +1,28 @@
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python / backend
+backend/venv/
+backend/__pycache__/
+backend/app/__pycache__/
+backend/app/models/__pycache__/
+backend/app/routes/__pycache__/
+backend/app/services/__pycache__/
+backend/app/utils/__pycache__/
+backend/.pytest_cache/
+
+# Environment / local config
+.env
+.env.*
+
+# Local database and uploads
+backend/instance/*.db
+backend/uploads/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
