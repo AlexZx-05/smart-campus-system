@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token
 from app.extensions import db
@@ -6,6 +6,15 @@ from app.models import User
 import uuid
 
 auth_bp = Blueprint("auth", __name__)
+
+
+def _normalize_email(email):
+    return (email or "").strip().lower()
+
+
+def _is_admin_email_allowed(email):
+    allowed = set(current_app.config.get("ADMIN_ALLOWED_EMAILS", []))
+    return _normalize_email(email) in allowed
 
 # ---------------- REGISTER ----------------
 @auth_bp.route("/api/register", methods=["POST"])
@@ -15,15 +24,18 @@ def register():
     if not data:
         return jsonify({"message": "No data provided"}), 400
 
-    email = data.get("email")
+    email = _normalize_email(data.get("email"))
     password = data.get("password")
-    role = data.get("role", "student")  # default role
+    role = (data.get("role", "student") or "student").strip().lower()
 
     if not email or not password:
         return jsonify({"message": "Email and password required"}), 400
 
     if role not in ["student", "faculty", "admin"]:
         return jsonify({"message": "Invalid role"}), 400
+
+    if role == "admin" and not _is_admin_email_allowed(email):
+        return jsonify({"message": "Admin registration is restricted by developer allowlist"}), 403
 
     # Check if email already exists
     if User.query.filter_by(email=email).first():
@@ -69,10 +81,14 @@ def login():
     if not data:
         return jsonify({"message": "No data provided"}), 400
 
-    user = User.query.filter_by(email=data.get("email")).first()
+    email = _normalize_email(data.get("email"))
+    user = User.query.filter_by(email=email).first()
 
     if not user or not check_password_hash(user.password, data.get("password")):
         return jsonify({"message": "Invalid credentials"}), 401
+
+    if user.role == "admin" and not _is_admin_email_allowed(user.email):
+        return jsonify({"message": "This admin account is not authorized in allowlist"}), 403
 
     # ✅ FIXED HERE
     access_token = create_access_token(identity=str(user.id))

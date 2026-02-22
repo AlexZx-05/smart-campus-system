@@ -42,40 +42,59 @@ function Login({ onLoginSuccess }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-200 flex items-center justify-center px-6">
-      <div className="w-full max-w-6xl grid lg:grid-cols-2 rounded-3xl shadow-2xl overflow-hidden bg-white">
+    <div className="min-h-screen bg-slate-200 flex items-center justify-center px-4 sm:px-6 py-6">
+      <div className="w-full max-w-6xl grid md:grid-cols-2 rounded-3xl shadow-2xl overflow-hidden bg-white">
 
         {/* LEFT PANEL - BRAND */}
-        <div
-          className="hidden lg:flex flex-col justify-between p-12 text-white relative"
-          style={{
-            backgroundImage: `
-              radial-gradient(900px 500px at 8% -5%, rgba(56,189,248,0.18), transparent 58%),
-              radial-gradient(700px 380px at 95% 105%, rgba(37,99,235,0.22), transparent 56%),
-              linear-gradient(145deg, rgba(2,12,35,0.96), rgba(8,35,86,0.96)),
-              url(${loginCampusBg})
-            `,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
-        >
-          <div>
-            <p className="uppercase tracking-[0.28em] text-cyan-200 text-xs font-semibold">
+        <div className="flex flex-col justify-between p-8 sm:p-10 lg:p-12 text-white relative min-h-[420px] md:min-h-full bg-slate-900">
+          <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_0%,rgba(56,189,248,0.3),transparent_55%),radial-gradient(circle_at_100%_100%,rgba(14,165,233,0.24),transparent_50%)]" />
+          <img
+            src={loginCampusBg}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover opacity-15 mix-blend-screen pointer-events-none"
+          />
+          <div className="relative z-10">
+            <p className="inline-flex items-center rounded-full border border-sky-300/50 bg-sky-300/15 px-4 py-1.5 uppercase tracking-[0.28em] text-sky-100 text-xs font-semibold">
               Smart Campus ERP
             </p>
 
-            <h1 className="text-4xl font-semibold mt-8 leading-tight">
-              Unified Academic Platform
+            <h1 className="text-4xl xl:text-[2.6rem] font-semibold mt-8 leading-tight max-w-lg">
+              Run your institution from one control center.
             </h1>
 
-            <p className="mt-6 text-slate-200/95 text-base leading-relaxed max-w-md">
-              Manage attendance, assignments, schedules, and academic
-              communication securely from one centralized dashboard.
+            <p className="mt-5 text-slate-100 text-[1.02rem] leading-relaxed max-w-lg">
+              Attendance, assignments, notices, and student data in one secure
+              ERP workspace for administrators, faculty, and learners.
             </p>
 
+            <div className="mt-10 grid grid-cols-3 gap-3 max-w-lg">
+              <div className="rounded-2xl border border-white/20 bg-slate-900/35 backdrop-blur-md p-4">
+                <p className="text-sky-200 text-lg font-semibold">99.9%</p>
+                <p className="mt-1 text-xs text-slate-100/90">Platform uptime</p>
+              </div>
+              <div className="rounded-2xl border border-white/20 bg-slate-900/35 backdrop-blur-md p-4">
+                <p className="text-sky-200 text-lg font-semibold">24/7</p>
+                <p className="mt-1 text-xs text-slate-100/90">Portal access</p>
+              </div>
+              <div className="rounded-2xl border border-white/20 bg-slate-900/35 backdrop-blur-md p-4">
+                <p className="text-sky-200 text-lg font-semibold">Role-based</p>
+                <p className="mt-1 text-xs text-slate-100/90">Secure login</p>
+              </div>
+            </div>
+
+            <div className="mt-10 max-w-lg rounded-2xl border border-sky-100/25 bg-slate-900/60 px-5 py-4">
+              <p className="text-sm text-slate-100 leading-relaxed">
+                "This ERP reduced administrative follow-ups and gave us real-time
+                visibility across departments."
+              </p>
+              <p className="mt-3 text-xs uppercase tracking-[0.2em] text-sky-200">
+                Registrar Office
+              </p>
+            </div>
           </div>
 
-          <div className="text-sm text-slate-300/95">
+          <div className="text-sm text-slate-200 relative z-10 mt-8">
             © {new Date().getFullYear()} Smart Campus ERP
           </div>
         </div>

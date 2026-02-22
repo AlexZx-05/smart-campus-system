@@ -34,19 +34,26 @@ function FacultyDashboard({ onLogout }) {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const [preferenceForm, setPreferenceForm] = useState({
-    day: "Monday",
     subject: "",
     student_count: "",
-    start_time: "",
-    end_time: "",
     semester: "Odd 2026",
+    department: "",
+    year: "",
+    section: "",
     details: "",
+    slots: [{ day: "Monday", start_time: "", end_time: "" }],
   });
   const [preferenceMessage, setPreferenceMessage] = useState("");
   const [preferenceError, setPreferenceError] = useState("");
   const [submittingPreference, setSubmittingPreference] = useState(false);
   const [myPreferences, setMyPreferences] = useState([]);
   const [loadingMyPreferences, setLoadingMyPreferences] = useState(false);
+  const [facultyTimetable, setFacultyTimetable] = useState([]);
+  const [todaySchedule, setTodaySchedule] = useState([]);
+  const [instituteTimetable, setInstituteTimetable] = useState([]);
+  const [loadingTimetable, setLoadingTimetable] = useState(false);
+  const [timetableError, setTimetableError] = useState("");
+  const [semesterFilter, setSemesterFilter] = useState("");
 
   const today = new Date();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
@@ -65,6 +72,8 @@ function FacultyDashboard({ onLogout }) {
   const [eventError, setEventError] = useState("");
   const [savingEvent, setSavingEvent] = useState(false);
   const [editingEventId, setEditingEventId] = useState(null);
+  const [inboxMessages, setInboxMessages] = useState([]);
+  const [loadingInboxMessages, setLoadingInboxMessages] = useState(false);
 
   const sidebarItems = [
     { key: "dashboard", label: "Dashboard" },
@@ -114,6 +123,10 @@ function FacultyDashboard({ onLogout }) {
         profile_image_url: data.profile_image_url || "",
       });
       if (data.name) setFacultyName(data.name);
+      setPreferenceForm((prev) => ({
+        ...prev,
+        department: prev.department || data.department || "",
+      }));
     } catch (err) {
       setProfileError(err.response?.data?.message || "Failed to load profile.");
     } finally {
@@ -134,6 +147,25 @@ function FacultyDashboard({ onLogout }) {
     }
   };
 
+  const loadFacultyTimetable = async () => {
+    setLoadingTimetable(true);
+    setTimetableError("");
+    try {
+      const [mySlots, todayRes, allSlots] = await Promise.all([
+        PreferenceService.getFacultyTimetable(semesterFilter),
+        PreferenceService.getFacultyTodaySchedule(undefined, semesterFilter),
+        PreferenceService.getFacultyInstituteTimetable(semesterFilter),
+      ]);
+      setFacultyTimetable(mySlots || []);
+      setTodaySchedule(todayRes?.slots || []);
+      setInstituteTimetable(allSlots || []);
+    } catch (err) {
+      setTimetableError(err.response?.data?.message || "Failed to load timetable.");
+    } finally {
+      setLoadingTimetable(false);
+    }
+  };
+
   const loadCalendarEvents = async () => {
     setLoadingCalendarEvents(true);
     setEventError("");
@@ -144,6 +176,19 @@ function FacultyDashboard({ onLogout }) {
       setEventError(err.response?.data?.message || "Failed to load calendar events.");
     } finally {
       setLoadingCalendarEvents(false);
+    }
+  };
+
+  const loadInboxMessages = async () => {
+    setLoadingInboxMessages(true);
+    setEventError("");
+    try {
+      const data = await PreferenceService.getInboxMessages();
+      setInboxMessages(data || []);
+    } catch (err) {
+      setEventError(err.response?.data?.message || "Failed to load messages.");
+    } finally {
+      setLoadingInboxMessages(false);
     }
   };
 
@@ -161,7 +206,15 @@ function FacultyDashboard({ onLogout }) {
     if (activePage === "preferences") loadMyPreferences();
     if (activePage === "profile") loadProfile();
     if (activePage === "calendar") loadCalendarEvents();
+    if (activePage === "messages") loadInboxMessages();
+    if (activePage === "my-timetable" || activePage === "all-classes") loadFacultyTimetable();
   }, [activePage]);
+
+  useEffect(() => {
+    if (activePage === "my-timetable" || activePage === "all-classes") {
+      loadFacultyTimetable();
+    }
+  }, [semesterFilter]);
 
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
@@ -220,21 +273,63 @@ function FacultyDashboard({ onLogout }) {
     setPreferenceError("");
   };
 
+  const handlePreferenceSlotChange = (index, key, value) => {
+    setPreferenceForm((prev) => ({
+      ...prev,
+      slots: prev.slots.map((slot, idx) => (idx === index ? { ...slot, [key]: value } : slot)),
+    }));
+    setPreferenceMessage("");
+    setPreferenceError("");
+  };
+
+  const addPreferenceSlot = () => {
+    setPreferenceForm((prev) => {
+      if (prev.slots.length >= 4) return prev;
+      return {
+        ...prev,
+        slots: [...prev.slots, { day: "Monday", start_time: "", end_time: "" }],
+      };
+    });
+  };
+
+  const removePreferenceSlot = (index) => {
+    setPreferenceForm((prev) => ({
+      ...prev,
+      slots: prev.slots.filter((_, idx) => idx !== index),
+    }));
+  };
+
   const handlePreferenceSubmit = async (e) => {
     e.preventDefault();
+    const validSlots = (preferenceForm.slots || []).filter(
+      (slot) => slot.day && slot.start_time && slot.end_time
+    );
+    if (validSlots.length === 0) {
+      setPreferenceError("Add at least one valid day/time slot.");
+      return;
+    }
+    if (validSlots.length > 4) {
+      setPreferenceError("Maximum 4 classes per week are allowed.");
+      return;
+    }
+
     setSubmittingPreference(true);
     setPreferenceMessage("");
     setPreferenceError("");
     try {
-      await PreferenceService.submitFacultyPreference(preferenceForm);
+      await PreferenceService.submitFacultyPreference({
+        ...preferenceForm,
+        slots: validSlots,
+      });
       setPreferenceMessage("Preference submitted successfully. Admin will review it.");
       setPreferenceForm((prev) => ({
         ...prev,
         subject: "",
         student_count: "",
-        start_time: "",
-        end_time: "",
+        year: "",
+        section: "",
         details: "",
+        slots: [{ day: "Monday", start_time: "", end_time: "" }],
       }));
       await loadMyPreferences();
     } catch (err) {
@@ -298,51 +393,266 @@ function FacultyDashboard({ onLogout }) {
   };
 
   const renderContent = () => {
-    if (activePage === "profile") {
+    if (activePage === "my-timetable") {
+      return (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-800">My Timetable</h3>
+                <p className="text-sm text-slate-500 mt-1">See your complete slot allocation and today&apos;s classes.</p>
+              </div>
+              <input
+                value={semesterFilter}
+                onChange={(e) => setSemesterFilter(e.target.value)}
+                placeholder="Semester (e.g. Odd 2026)"
+                className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+              />
+            </div>
+          </div>
+
+          {timetableError && (
+            <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{timetableError}</div>
+          )}
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <h4 className="text-base font-semibold text-slate-800">Today&apos;s Teaching Plan</h4>
+            {loadingTimetable ? (
+              <p className="text-sm text-slate-500 mt-3">Loading...</p>
+            ) : todaySchedule.length === 0 ? (
+              <p className="text-sm text-slate-500 mt-3">No class assigned for today.</p>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {todaySchedule.map((slot, idx) => (
+                  <div key={`${slot.id || idx}`} className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-sm font-semibold text-blue-900">
+                      {slot.start_time} - {slot.end_time} | {slot.subject}
+                    </p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      Room {slot.room} | {slot.department || "-"} {slot.year || "-"}-{slot.section || "-"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <h4 className="text-base font-semibold text-slate-800">Full Faculty Timetable</h4>
+            {loadingTimetable ? (
+              <p className="text-sm text-slate-500 mt-3">Loading...</p>
+            ) : facultyTimetable.length === 0 ? (
+              <p className="text-sm text-slate-500 mt-3">No published timetable for selected semester.</p>
+            ) : (
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Day</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Time</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Subject</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Class</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Room</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {facultyTimetable.map((slot, idx) => (
+                      <tr key={`${slot.id || idx}`} className="border-t border-slate-200">
+                        <td className="px-4 py-3 text-sm text-slate-700">{slot.day}</td>
+                        <td className="px-4 py-3 text-sm text-slate-700">
+                          {slot.start_time} - {slot.end_time}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-slate-700">{slot.subject}</td>
+                        <td className="px-4 py-3 text-sm text-slate-700">
+                          {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-slate-700">{slot.room}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (activePage === "all-classes") {
       return (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-          <h3 className="text-lg font-semibold text-slate-800">Faculty Profile</h3>
-          <p className="text-sm text-slate-500 mt-2">Update your details used for timetable and administration.</p>
-
-          {profileMessage && <div className="mt-4 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">{profileMessage}</div>}
-          {profileError && <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{profileError}</div>}
-
-          {loadingProfile ? (
-            <p className="text-sm text-slate-500 mt-4">Loading profile...</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-800">Institute Timetable</h3>
+              <p className="text-sm text-slate-500 mt-1">View all published classes across departments.</p>
+            </div>
+            <input
+              value={semesterFilter}
+              onChange={(e) => setSemesterFilter(e.target.value)}
+              placeholder="Semester (e.g. Odd 2026)"
+              className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+            />
+          </div>
+          {loadingTimetable ? (
+            <p className="text-sm text-slate-500 mt-4">Loading...</p>
+          ) : instituteTimetable.length === 0 ? (
+            <p className="text-sm text-slate-500 mt-4">No timetable found.</p>
           ) : (
-            <form className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4" onSubmit={handleProfileSave}>
-              <div className="md:col-span-2 flex items-center gap-4 p-4 rounded-lg border border-slate-200 bg-slate-50">
-                <img src={profile.profile_image_url || defaultAvatar} alt="Faculty profile" className="h-16 w-16 rounded-full object-cover border border-slate-300" />
-                <div>
-                  <label className="inline-flex items-center px-3 py-2 text-sm rounded-lg bg-slate-900 text-white hover:bg-slate-800 cursor-pointer">
-                    {uploadingPhoto ? "Uploading..." : "Upload Photo"}
-                    <input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" className="hidden" onChange={handlePhotoUpload} disabled={uploadingPhoto} />
-                  </label>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Full Name</label>
-                <input name="name" value={profile.name} onChange={handleProfileChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Email</label>
-                <input name="email" value={profile.email} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 bg-slate-100 text-slate-500" disabled />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
-                <input name="department" value={profile.department} onChange={handleProfileChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Employee Number</label>
-                <input name="roll_number" value={profile.roll_number} onChange={handleProfileChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
-              </div>
-              <div className="md:col-span-2">
-                <button type="submit" disabled={savingProfile} className={`px-4 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 ${savingProfile ? "opacity-60 cursor-not-allowed" : ""}`}>
-                  {savingProfile ? "Saving..." : "Save Profile"}
-                </button>
-              </div>
-            </form>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Day</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Time</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Subject</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Faculty</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Class</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Room</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {instituteTimetable.map((slot, idx) => (
+                    <tr key={`${slot.id || idx}`} className="border-t border-slate-200">
+                      <td className="px-4 py-3 text-sm text-slate-700">{slot.day}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700">
+                        {slot.start_time} - {slot.end_time}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-slate-700">{slot.subject}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700">{slot.faculty_name}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700">
+                        {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-slate-700">{slot.room}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
+        </div>
+      );
+    }
+
+    if (activePage === "profile") {
+      return (
+        <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_64px_-28px_rgba(15,23,42,0.45)]">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.12),transparent_52%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.14),transparent_58%)]" />
+          <div className="relative p-6 md:p-8">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                  Faculty Workspace
+                </p>
+                <h3 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">Faculty Profile</h3>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
+                  Update your details used for timetable and administration.
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Profile status</p>
+                <p className="mt-1 text-sm font-semibold text-emerald-700">Ready to publish</p>
+              </div>
+            </div>
+
+            {profileMessage && (
+              <div className="mt-6 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                {profileMessage}
+              </div>
+            )}
+            {profileError && (
+              <div className="mt-6 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {profileError}
+              </div>
+            )}
+
+            {loadingProfile ? (
+              <p className="mt-6 text-sm text-slate-500">Loading profile...</p>
+            ) : (
+              <form className="mt-7 grid grid-cols-1 gap-6 xl:grid-cols-5" onSubmit={handleProfileSave}>
+                <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-6 text-white">
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">Faculty profile</p>
+                  <div className="mt-5 flex items-center gap-4">
+                    <img
+                      src={profile.profile_image_url || defaultAvatar}
+                      alt="Faculty profile"
+                      className="h-20 w-20 rounded-2xl object-cover ring-2 ring-white/35"
+                    />
+                    <div>
+                      <p className="text-base font-semibold text-white">{profile.name || "Faculty Member"}</p>
+                      <p className="mt-1 text-xs text-slate-200">{profile.department || "Department pending"}</p>
+                    </div>
+                  </div>
+                  <label className="mt-5 inline-flex cursor-pointer items-center rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/20">
+                    {uploadingPhoto ? "Uploading..." : "Upload Photo"}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      className="hidden"
+                      onChange={handlePhotoUpload}
+                      disabled={uploadingPhoto}
+                    />
+                  </label>
+                  <p className="mt-3 text-xs leading-relaxed text-slate-200">
+                    Use a clear headshot (JPG/PNG/WEBP). Your photo is shown in timetable and faculty listings.
+                  </p>
+                </div>
+
+                <div className="xl:col-span-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="md:col-span-2">
+                    <label className="mb-2 block text-sm font-semibold text-slate-700">Full Name</label>
+                    <input
+                      name="name"
+                      value={profile.name}
+                      onChange={handleProfileChange}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+                      required
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="mb-2 block text-sm font-semibold text-slate-700">Email</label>
+                    <input
+                      name="email"
+                      value={profile.email}
+                      className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-slate-500"
+                      disabled
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-700">Department</label>
+                    <input
+                      name="department"
+                      value={profile.department}
+                      onChange={handleProfileChange}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-700">Employee Number</label>
+                    <input
+                      name="roll_number"
+                      value={profile.roll_number}
+                      onChange={handleProfileChange}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+                      required
+                    />
+                  </div>
+                  <div className="md:col-span-2 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-sm text-slate-600">Keep profile details accurate for conflict-free scheduling.</p>
+                    <button
+                      type="submit"
+                      disabled={savingProfile}
+                      className={`rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-slate-200 ${
+                        savingProfile ? "cursor-not-allowed opacity-60" : ""
+                      }`}
+                    >
+                      {savingProfile ? "Saving..." : "Save Profile"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       );
     }
@@ -352,22 +662,14 @@ function FacultyDashboard({ onLogout }) {
         <div className="space-y-4">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <h3 className="text-lg font-semibold text-slate-800">Submit Preference</h3>
-            <p className="text-sm text-slate-500 mt-1">Share your preferred teaching slots before timetable generation.</p>
+            <p className="text-sm text-slate-500 mt-1">
+              Submit one subject with weekly teaching slots. Maximum 4 classes per week.
+            </p>
 
             {preferenceMessage && <div className="mt-4 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">{preferenceMessage}</div>}
             {preferenceError && <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{preferenceError}</div>}
 
             <form className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4" onSubmit={handlePreferenceSubmit}>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Day</label>
-                <select name="day" value={preferenceForm.day} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required>
-                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
-                    <option key={day} value={day}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Subject</label>
                 <input name="subject" value={preferenceForm.subject} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
@@ -381,12 +683,88 @@ function FacultyDashboard({ onLogout }) {
                 <input name="semester" value={preferenceForm.semester} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Start Time</label>
-                <input type="time" name="start_time" value={preferenceForm.start_time} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
+                <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
+                <input name="department" value={preferenceForm.department} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">End Time</label>
-                <input type="time" name="end_time" value={preferenceForm.end_time} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
+                <label className="block text-sm font-medium text-slate-700 mb-2">Year</label>
+                <input type="number" min="1" max="8" name="year" value={preferenceForm.year} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Section</label>
+                <input name="section" value={preferenceForm.section} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" placeholder="A" />
+              </div>
+              <div className="md:col-span-2 rounded-lg border border-slate-200 p-4">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-slate-700">Weekly Slots</label>
+                  <button
+                    type="button"
+                    onClick={addPreferenceSlot}
+                    disabled={preferenceForm.slots.length >= 4}
+                    className={`px-3 py-1.5 rounded-md text-xs ${
+                      preferenceForm.slots.length >= 4
+                        ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                        : "bg-slate-900 text-white hover:bg-slate-800"
+                    }`}
+                  >
+                    Add Slot
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {preferenceForm.slots.length}/4 slots added for this subject.
+                </p>
+                <div className="mt-3 space-y-3">
+                  {preferenceForm.slots.map((slot, idx) => (
+                    <div key={`slot-${idx}`} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Day</label>
+                        <select
+                          value={slot.day}
+                          onChange={(e) => handlePreferenceSlotChange(idx, "day", e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                        >
+                          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
+                            <option key={day} value={day}>
+                              {day}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">Start Time</label>
+                        <input
+                          type="time"
+                          value={slot.start_time}
+                          onChange={(e) => handlePreferenceSlotChange(idx, "start_time", e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">End Time</label>
+                        <input
+                          type="time"
+                          value={slot.end_time}
+                          onChange={(e) => handlePreferenceSlotChange(idx, "end_time", e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                        />
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => removePreferenceSlot(idx)}
+                          disabled={preferenceForm.slots.length === 1}
+                          className={`w-full px-3 py-2.5 rounded-lg text-sm ${
+                            preferenceForm.slots.length === 1
+                              ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+                              : "bg-red-50 text-red-700 hover:bg-red-100"
+                          }`}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-slate-700 mb-2">Details</label>
@@ -427,6 +805,9 @@ function FacultyDashboard({ onLogout }) {
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 mt-1">Students: {pref.student_count || "-"}</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Class: {pref.department || "-"} / {pref.year || "-"} / {pref.section || "-"}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -623,6 +1004,51 @@ function FacultyDashboard({ onLogout }) {
       );
     }
 
+    if (activePage === "messages") {
+      return (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-800">Admin Messages</h3>
+              <p className="text-sm text-slate-500 mt-1">
+                Announcements sent to faculty and campus-wide updates.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadInboxMessages}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Refresh
+            </button>
+          </div>
+
+          {loadingInboxMessages ? (
+            <p className="text-sm text-slate-500 mt-4">Loading messages...</p>
+          ) : inboxMessages.length === 0 ? (
+            <p className="text-sm text-slate-500 mt-4">No messages from admin yet.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {inboxMessages.map((msg) => (
+                <div key={msg.id} className="rounded-lg border border-slate-200 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800">{msg.subject}</p>
+                    <span className="text-xs rounded-full px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200">
+                      {msg.recipient_role}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    By {msg.sender_name} | {new Date(msg.created_at).toLocaleString()}
+                  </p>
+                  <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{msg.body}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
         <h3 className="text-lg font-semibold text-slate-800">{sectionMessage}</h3>
@@ -648,4 +1074,3 @@ function FacultyDashboard({ onLogout }) {
 }
 
 export default FacultyDashboard;
-

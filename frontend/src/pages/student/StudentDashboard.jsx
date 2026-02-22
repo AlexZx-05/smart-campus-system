@@ -37,6 +37,7 @@ function StudentDashboard({ onLogout }) {
   const sidebarItems = [
     { key: "dashboard", label: "Dashboard" },
     { key: "timetable", label: "Timetable" },
+    { key: "institute-timetable", label: "Institute Timetable" },
     { key: "rooms", label: "Room Availability" },
     { key: "notifications", label: "Notifications" },
     { key: "assignments", label: "Assignments" },
@@ -50,6 +51,7 @@ function StudentDashboard({ onLogout }) {
   const pageTitleMap = {
     dashboard: "Student Dashboard",
     timetable: "Timetable",
+    "institute-timetable": "Institute Timetable",
     rooms: "Room Availability",
     notifications: "Notifications",
     assignments: "Assignments",
@@ -65,7 +67,9 @@ function StudentDashboard({ onLogout }) {
       case "dashboard":
         return <StudentOverview data={data} loading={loading} />;
       case "timetable":
-        return <Timetable />;
+        return <Timetable defaultView="my" />;
+      case "institute-timetable":
+        return <Timetable defaultView="institute" />;
       case "rooms":
         return <Rooms />;
       case "notifications":

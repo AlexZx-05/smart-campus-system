@@ -1,3 +1,4 @@
+from datetime import datetime
 from app.extensions import db
 
 
@@ -22,3 +23,4 @@ class User(db.Model):
     profile_image = db.Column(db.String(255), nullable=True)
 
     reset_token = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)

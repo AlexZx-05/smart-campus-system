@@ -71,16 +71,54 @@ function UserIcon() {
 function SettingsIcon() {
   return (
     <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
-      <path d="m19.4 15 .6 1.1-1.8 3.1-1.3-.2a7.9 7.9 0 0 1-1.4.8l-.4 1.2h-3.6l-.4-1.2a7.9 7.9 0 0 1-1.4-.8l-1.3.2L4 16.1 4.6 15a8.4 8.4 0 0 1 0-1.9L4 12l1.8-3.1 1.3.2c.4-.3.9-.6 1.4-.8l.4-1.2h3.6l.4 1.2c.5.2 1 .5 1.4.8l1.3-.2L20 12l-.6 1.1a8.4 8.4 0 0 1 0 1.9Z" />
+      <path d="M10.4 2.9h3.2l.5 2.2c.5.2 1 .4 1.5.8l2.1-1 2.3 2.3-1 2.1c.3.5.6 1 .8 1.5l2.2.5v3.2l-2.2.5c-.2.5-.4 1-.8 1.5l1 2.1-2.3 2.3-2.1-1c-.5.3-1 .6-1.5.8l-.5 2.2h-3.2l-.5-2.2c-.5-.2-1-.4-1.5-.8l-2.1 1-2.3-2.3 1-2.1a8.4 8.4 0 0 1-.8-1.5l-2.2-.5v-3.2l2.2-.5c.2-.5.4-1 .8-1.5l-1-2.1 2.3-2.3 2.1 1c.5-.3 1-.6 1.5-.8l.5-2.2Z" />
+      <circle cx="12" cy="12" r="2.7" />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M16 21a4 4 0 0 0-8 0" />
+      <circle cx="12" cy="11" r="3.2" />
+      <path d="M22 20a3.5 3.5 0 0 0-3-3.5" />
+      <path d="M2 20a3.5 3.5 0 0 1 3-3.5" />
+      <path d="M18.5 8.8a2.5 2.5 0 1 0-1.4-4.8" />
+      <path d="M5.5 8.8a2.5 2.5 0 1 1 1.4-4.8" />
+    </svg>
+  );
+}
+
+function MessageIcon() {
+  return (
+    <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8A2.5 2.5 0 0 1 17.5 17H9l-5 3v-3.5A2.5 2.5 0 0 1 4 14V6.5Z" />
+      <path d="M7.5 8.5h9M7.5 12h6" />
+    </svg>
+  );
+}
+
+function ConflictIcon() {
+  return (
+    <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 3 3.7 18a1.5 1.5 0 0 0 1.3 2.2h14a1.5 1.5 0 0 0 1.3-2.2L12 3Z" />
+      <path d="M12 9v5M12 17h.01" />
     </svg>
   );
 }
 
 const icons = {
   dashboard: DashboardIcon,
+  preferences: ClipboardIcon,
   timetable: CalendarIcon,
+  "institute-timetable": CalendarIcon,
+  "my-timetable": CalendarIcon,
+  "all-classes": BuildingIcon,
   rooms: BuildingIcon,
+  users: UsersIcon,
+  messages: MessageIcon,
+  conflicts: ConflictIcon,
   notifications: BellIcon,
   assignments: ClipboardIcon,
   progress: ChartIcon,
@@ -90,15 +128,47 @@ const icons = {
   settings: SettingsIcon,
 };
 
-function Sidebar({ items, activePage, onPageChange, portalLabel = "Student ERP Portal" }) {
+function Sidebar({
+  items,
+  activePage,
+  onPageChange,
+  portalLabel = "Student ERP Portal",
+  isOpen,
+  onToggle,
+}) {
   return (
-    <aside className="w-[250px] h-screen bg-slate-950 text-slate-200 p-4 hidden md:block shrink-0 overflow-y-auto">
-      <div className="px-2 py-4">
-        <h2 className="text-xl font-bold">Smart Campus</h2>
-        <p className="text-xs text-slate-400 mt-1">{portalLabel}</p>
+    <aside
+      className={`h-screen bg-slate-950 text-slate-200 p-3 md:p-4 shrink-0 overflow-y-auto border-r border-slate-800 transition-all duration-300 ${
+        isOpen ? "w-[272px]" : "w-[84px]"
+      }`}
+    >
+      <div className={`px-1 py-3 ${isOpen ? "" : "flex flex-col items-center"}`}>
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-slate-500 hover:bg-slate-800 transition-colors ${
+            isOpen ? "" : "mb-4"
+          }`}
+          aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
+        >
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+
+        {isOpen ? (
+          <div className="mt-4">
+            <h2 className="text-xl font-bold text-white tracking-tight leading-tight">Smart Campus</h2>
+            <p className="text-xs text-slate-400 mt-1 tracking-wide">{portalLabel}</p>
+          </div>
+        ) : (
+          <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-900 text-sky-300 font-semibold">
+            SC
+          </div>
+        )}
       </div>
 
-      <nav className="mt-3 space-y-1">
+      <nav className="mt-4 space-y-1.5">
         {items.map((item) => {
           const Icon = icons[item.key] || DashboardIcon;
           const isActive = activePage === item.key;
@@ -107,18 +177,27 @@ function Sidebar({ items, activePage, onPageChange, portalLabel = "Student ERP P
             <button
               key={item.key}
               onClick={() => onPageChange(item.key)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
+              title={!isOpen ? item.label : undefined}
+              className={`group w-full flex items-center rounded-xl text-[15px] transition-all ${
                 isActive
-                  ? "bg-gradient-to-r from-blue-600 to-blue-500 text-white"
-                  : "hover:bg-slate-800 text-slate-300"
+                  ? "bg-slate-800 border border-slate-700 text-white shadow-md"
+                  : "text-slate-300 hover:text-white hover:bg-slate-900"
               }`}
             >
-              <Icon />
-              <span>{item.label}</span>
+              <span className={`inline-flex h-11 items-center ${isOpen ? "w-11 ml-1 justify-center" : "w-full justify-center"}`}>
+                <Icon />
+              </span>
+              {isOpen && <span className="pr-3 truncate font-medium">{item.label}</span>}
             </button>
           );
         })}
       </nav>
+
+      {!isOpen && (
+        <div className="hidden md:flex mt-8 justify-center">
+          <div className="h-1.5 w-8 rounded-full bg-slate-700" />
+        </div>
+      )}
     </aside>
   );
 }

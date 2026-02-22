@@ -7,6 +7,7 @@ from app.routes.auth_routes import auth_bp
 from app.routes.dashboard_routes import dashboard_bp
 from app.routes.preference_routes import preference_bp
 from app.routes.event_routes import event_bp
+from app.models import Room
 from sqlalchemy import text
 
 
@@ -15,6 +16,10 @@ def _ensure_user_profile_image_column():
     column_names = [col[1] for col in columns]
     if "profile_image" not in column_names:
         db.session.execute(text("ALTER TABLE user ADD COLUMN profile_image VARCHAR(255)"))
+        db.session.commit()
+    if "created_at" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN created_at DATETIME"))
+        db.session.execute(text("UPDATE user SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
         db.session.commit()
 
 
@@ -33,6 +38,32 @@ def _ensure_faculty_preference_columns():
     if "student_count" not in column_names:
         db.session.execute(text("ALTER TABLE faculty_preference ADD COLUMN student_count INTEGER"))
         db.session.commit()
+    if "department" not in column_names:
+        db.session.execute(text("ALTER TABLE faculty_preference ADD COLUMN department VARCHAR(50)"))
+        db.session.commit()
+    if "year" not in column_names:
+        db.session.execute(text("ALTER TABLE faculty_preference ADD COLUMN year INTEGER"))
+        db.session.commit()
+    if "section" not in column_names:
+        db.session.execute(text("ALTER TABLE faculty_preference ADD COLUMN section VARCHAR(10)"))
+        db.session.commit()
+
+
+def _ensure_default_rooms():
+    if Room.query.count() > 0:
+        return
+
+    defaults = [
+        ("A-101", 40),
+        ("A-102", 60),
+        ("B-201", 80),
+        ("B-202", 100),
+        ("C-301", 120),
+        ("Lab-1", 45),
+    ]
+    for name, capacity in defaults:
+        db.session.add(Room(name=name, capacity=capacity, is_active=True))
+    db.session.commit()
 
 def create_app():
     app = Flask(__name__)
@@ -61,5 +92,6 @@ def create_app():
         db.create_all()
         _ensure_user_profile_image_column()
         _ensure_faculty_preference_columns()
+        _ensure_default_rooms()
 
     return app

@@ -74,7 +74,6 @@ function Register() {
             >
               <option value="student">Student</option>
               <option value="faculty">Faculty</option>
-              <option value="admin">Admin</option>
             </select>
           </div>
 
@@ -113,31 +112,27 @@ function Register() {
             />
           </div>
 
-          {form.role !== "admin" && (
-            <>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Roll / Employee No</label>
-                <input
-                  name="roll_number"
-                  placeholder="e.g. STU12345"
-                  className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none"
-                  onChange={handleChange}
-                  required
-                />
-              </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Roll / Employee No</label>
+            <input
+              name="roll_number"
+              placeholder="e.g. STU12345"
+              className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none"
+              onChange={handleChange}
+              required
+            />
+          </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Department</label>
-                <input
-                  name="department"
-                  placeholder="e.g. CSE"
-                  className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none"
-                  onChange={handleChange}
-                  required
-                />
-              </div>
-            </>
-          )}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Department</label>
+            <input
+              name="department"
+              placeholder="e.g. CSE"
+              className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-teal-500 focus:ring-2 focus:ring-teal-200 outline-none"
+              onChange={handleChange}
+              required
+            />
+          </div>
 
           {form.role === "student" && (
             <>
