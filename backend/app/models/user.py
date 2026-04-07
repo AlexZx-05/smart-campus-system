@@ -9,6 +9,7 @@ class User(db.Model):
     name = db.Column(db.String(100), nullable=False)
 
     email = db.Column(db.String(120), unique=True, nullable=False)
+    phone_number = db.Column(db.String(20), unique=True, nullable=True)
 
     password = db.Column(db.String(200), nullable=False)
 
@@ -23,4 +24,9 @@ class User(db.Model):
     profile_image = db.Column(db.String(255), nullable=True)
 
     reset_token = db.Column(db.String(200), nullable=True)
+    otp_window_started_at = db.Column(db.DateTime, nullable=True)
+    otp_request_count_hour = db.Column(db.Integer, nullable=False, default=0)
+    otp_last_requested_at = db.Column(db.DateTime, nullable=True)
+    otp_failed_attempts = db.Column(db.Integer, nullable=False, default=0)
+    otp_last_verified_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)

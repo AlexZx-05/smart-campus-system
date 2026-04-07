@@ -27,12 +27,10 @@ API.interceptors.request.use(
 API.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
-        // Token might be expired
-        localStorage.removeItem("token");
-        localStorage.removeItem("role");
-        // Optional: Redirect to login or trigger a global state update
-        // window.location.href = "/";
+    const status = error?.response?.status;
+    if (status === 401 || status === 422) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("role");
     }
     return Promise.reject(error);
   }

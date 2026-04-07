@@ -9,11 +9,13 @@ dashboard_bp = Blueprint("dashboard", __name__)
 @jwt_required()
 def dashboard():
 
-    # Get user ID from JWT (stored as string)
     user_id = get_jwt_identity()
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "Invalid authentication token"}), 401
 
-    # Convert to int and fetch user from database
-    user = User.query.get(int(user_id))
+    user = User.query.get(user_id_int)
 
     if not user:
         return jsonify({"message": "User not found"}), 404

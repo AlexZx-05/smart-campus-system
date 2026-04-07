@@ -67,6 +67,12 @@ function AdminDashboard({ onLogout }) {
     subject: "",
     body: "",
   });
+  const [supportQueries, setSupportQueries] = useState([]);
+  const [loadingSupportQueries, setLoadingSupportQueries] = useState(false);
+  const [queryStatusFilter, setQueryStatusFilter] = useState("");
+  const [querySenderRoleFilter, setQuerySenderRoleFilter] = useState("");
+  const [queryPriorityFilter, setQueryPriorityFilter] = useState("");
+  const [queryUpdateForm, setQueryUpdateForm] = useState({});
   const [dashboardOverview, setDashboardOverview] = useState(null);
   const [loadingDashboardOverview, setLoadingDashboardOverview] = useState(false);
   const [conflicts, setConflicts] = useState([]);
@@ -201,6 +207,7 @@ function AdminDashboard({ onLogout }) {
     }
     if (activePage === "messages") {
       loadAdminMessages();
+      loadSupportQueries();
     }
     if (activePage === "conflicts") {
       loadConflicts();
@@ -247,6 +254,12 @@ function AdminDashboard({ onLogout }) {
     }
   }, [messageRecipientFilter]);
 
+  useEffect(() => {
+    if (activePage === "messages") {
+      loadSupportQueries();
+    }
+  }, [queryStatusFilter, querySenderRoleFilter, queryPriorityFilter]);
+
   const loadCalendarEvents = async () => {
     setLoadingCalendarEvents(true);
     setEventError("");
@@ -287,6 +300,23 @@ function AdminDashboard({ onLogout }) {
       setPreferencesError(err.response?.data?.message || "Failed to load messages.");
     } finally {
       setLoadingAdminMessages(false);
+    }
+  };
+
+  const loadSupportQueries = async () => {
+    setLoadingSupportQueries(true);
+    setPreferencesError("");
+    try {
+      const data = await PreferenceService.getAdminSupportQueries({
+        status: queryStatusFilter || undefined,
+        sender_role: querySenderRoleFilter || undefined,
+        priority: queryPriorityFilter || undefined,
+      });
+      setSupportQueries(data || []);
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to load user queries.");
+    } finally {
+      setLoadingSupportQueries(false);
     }
   };
 
@@ -573,6 +603,29 @@ function AdminDashboard({ onLogout }) {
       await loadAdminMessages();
     } catch (err) {
       setPreferencesError(err.response?.data?.message || "Failed to send message.");
+    }
+  };
+
+  const handleQueryUpdateInput = (queryId, field, value) => {
+    setQueryUpdateForm((prev) => ({
+      ...prev,
+      [queryId]: {
+        ...(prev[queryId] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSupportQueryUpdate = async (queryId) => {
+    const payload = queryUpdateForm[queryId] || {};
+    if (!payload.status && payload.admin_note === undefined) {
+      return;
+    }
+    try {
+      await PreferenceService.updateAdminSupportQuery(queryId, payload);
+      await loadSupportQueries();
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to update user query.");
     }
   };
 
@@ -1539,9 +1592,9 @@ function AdminDashboard({ onLogout }) {
                   onChange={handleMessageFormChange}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
                 >
-                  <option value="faculty">Faculty</option>
+                  <option value="faculty">Teacher (Faculty)</option>
                   <option value="student">Student</option>
-                  <option value="all">Faculty + Student (All)</option>
+                  <option value="all">Student + Teacher (All)</option>
                 </select>
               </div>
               <div>
@@ -1598,9 +1651,9 @@ function AdminDashboard({ onLogout }) {
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="">All audiences</option>
-                <option value="faculty">Faculty</option>
+                <option value="faculty">Teacher (Faculty)</option>
                 <option value="student">Student</option>
-                <option value="all">All</option>
+                <option value="all">Student + Teacher (All)</option>
               </select>
             </div>
 
@@ -1622,6 +1675,105 @@ function AdminDashboard({ onLogout }) {
                       By {msg.sender_name} | {new Date(msg.created_at).toLocaleString()}
                     </p>
                     <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{msg.body}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h4 className="text-base font-semibold text-slate-800">Incoming User Queries</h4>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={queryStatusFilter}
+                  onChange={(e) => setQueryStatusFilter(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All status</option>
+                  <option value="open">Open</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="closed">Closed</option>
+                </select>
+                <select
+                  value={querySenderRoleFilter}
+                  onChange={(e) => setQuerySenderRoleFilter(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All senders</option>
+                  <option value="student">Student</option>
+                  <option value="faculty">Faculty</option>
+                </select>
+                <select
+                  value={queryPriorityFilter}
+                  onChange={(e) => setQueryPriorityFilter(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">All priority</option>
+                  <option value="high">High</option>
+                  <option value="normal">Normal</option>
+                  <option value="low">Low</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={loadSupportQueries}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {loadingSupportQueries ? (
+              <p className="text-sm text-slate-500 mt-4">Loading user queries...</p>
+            ) : supportQueries.length === 0 ? (
+              <p className="text-sm text-slate-500 mt-4">No user queries found.</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {supportQueries.map((query) => (
+                  <div key={query.id} className="rounded-lg border border-slate-200 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-800">{query.subject}</p>
+                      <span className="text-xs rounded-full px-2.5 py-1 bg-slate-100 text-slate-700 border border-slate-300">
+                        {query.status.replace("_", " ")}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      From {query.sender_name} ({query.sender_role}) | {query.sender_email} | {new Date(query.created_at).toLocaleString()}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Category: {query.category} | Priority: {query.priority}
+                    </p>
+                    <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{query.body}</p>
+
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <select
+                        value={(queryUpdateForm[query.id]?.status ?? query.status)}
+                        onChange={(e) => handleQueryUpdateInput(query.id, "status", e.target.value)}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      >
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="resolved">Resolved</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                      <input
+                        value={(queryUpdateForm[query.id]?.admin_note ?? query.admin_note ?? "")}
+                        onChange={(e) => handleQueryUpdateInput(query.id, "admin_note", e.target.value)}
+                        className="md:col-span-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        placeholder="Add internal/admin note..."
+                      />
+                    </div>
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSupportQueryUpdate(query.id)}
+                        className="rounded-lg bg-slate-800 text-white hover:bg-slate-900 px-3 py-2 text-sm"
+                      >
+                        Update Query
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

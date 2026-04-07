@@ -10,6 +10,7 @@ function DashboardLayout({
   portalLabel,
   userName,
   userAvatarUrl,
+  onProfileClick,
   onLogout,
   children,
 }) {
@@ -45,6 +46,7 @@ function DashboardLayout({
           title={pageTitle}
           userName={userName}
           userAvatarUrl={userAvatarUrl}
+          onProfileClick={onProfileClick}
           theme={theme}
           onThemeToggle={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
           onLogout={onLogout}

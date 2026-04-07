@@ -13,6 +13,7 @@ def _get_current_user():
 
 def _serialize_event(event):
     creator = User.query.get(event.created_by)
+    creator_role = creator.role if creator else None
     return {
         "id": event.id,
         "title": event.title,
@@ -20,7 +21,8 @@ def _serialize_event(event):
         "date": event.date,
         "created_by": event.created_by,
         "creator_name": creator.name if creator else None,
-        "creator_role": creator.role if creator else None,
+        "creator_role": creator_role,
+        "audience": "private" if creator_role == "student" else "campus",
         "created_at": event.created_at.isoformat() if event.created_at else None,
     }
 
@@ -28,7 +30,22 @@ def _serialize_event(event):
 @event_bp.route("/api/events", methods=["GET"])
 @jwt_required()
 def list_events():
-    events = Event.query.order_by(Event.date.asc(), Event.created_at.desc()).all()
+    user = _get_current_user()
+    if not user:
+        return jsonify({"message": "Unauthorized"}), 401
+
+    all_events = Event.query.order_by(Event.date.asc(), Event.created_at.desc()).all()
+    if user.role == "student":
+        filtered = []
+        for event in all_events:
+            creator = User.query.get(event.created_by)
+            creator_role = creator.role if creator else None
+            # Students see campus events (faculty/admin) + their own private events.
+            if creator_role in {"faculty", "admin"} or event.created_by == user.id:
+                filtered.append(event)
+        events = filtered
+    else:
+        events = all_events
     return jsonify([_serialize_event(event) for event in events]), 200
 
 
@@ -36,7 +53,7 @@ def list_events():
 @jwt_required()
 def create_event():
     user = _get_current_user()
-    if not user or user.role not in {"faculty", "admin"}:
+    if not user or user.role not in {"faculty", "admin", "student"}:
         return jsonify({"message": "Forbidden"}), 403
 
     data = request.get_json() or {}
@@ -65,14 +82,19 @@ def create_event():
 @jwt_required()
 def update_event(event_id):
     user = _get_current_user()
-    if not user or user.role not in {"faculty", "admin"}:
+    if not user or user.role not in {"faculty", "admin", "student"}:
         return jsonify({"message": "Forbidden"}), 403
 
     event = Event.query.get(event_id)
     if not event:
         return jsonify({"message": "Event not found"}), 404
 
-    if event.created_by != user.id:
+    creator = User.query.get(event.created_by)
+    creator_role = creator.role if creator else None
+    if user.role == "student":
+        if event.created_by != user.id or creator_role != "student":
+            return jsonify({"message": "Students can edit only their private events"}), 403
+    elif event.created_by != user.id:
         return jsonify({"message": "Only event creator can edit"}), 403
 
     data = request.get_json() or {}
@@ -97,17 +119,21 @@ def update_event(event_id):
 @jwt_required()
 def delete_event(event_id):
     user = _get_current_user()
-    if not user or user.role not in {"faculty", "admin"}:
+    if not user or user.role not in {"faculty", "admin", "student"}:
         return jsonify({"message": "Forbidden"}), 403
 
     event = Event.query.get(event_id)
     if not event:
         return jsonify({"message": "Event not found"}), 404
 
-    if event.created_by != user.id:
+    creator = User.query.get(event.created_by)
+    creator_role = creator.role if creator else None
+    if user.role == "student":
+        if event.created_by != user.id or creator_role != "student":
+            return jsonify({"message": "Students can delete only their private events"}), 403
+    elif event.created_by != user.id:
         return jsonify({"message": "Only event creator can delete"}), 403
 
     db.session.delete(event)
     db.session.commit()
     return jsonify({"message": "Event deleted successfully"}), 200
-

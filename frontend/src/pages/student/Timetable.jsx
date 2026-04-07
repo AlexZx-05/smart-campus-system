@@ -19,19 +19,36 @@ function Timetable({ defaultView = "my" }) {
   const loadData = async () => {
     setLoading(true);
     setError("");
-    try {
-      const [myRes, instituteRes] = await Promise.all([
-        PreferenceService.getStudentMyTimetable(semester),
-        PreferenceService.getStudentInstituteTimetable(semester),
-      ]);
-      setMyInfo(myRes.student || { department: "", year: "", section: "" });
-      setMyTimetable(myRes.timetable || []);
-      setInstituteTimetable(instituteRes || []);
-    } catch (err) {
-      setError(err.response?.data?.message || "Failed to load timetable.");
-    } finally {
-      setLoading(false);
+    const [myRes, instituteRes] = await Promise.allSettled([
+      PreferenceService.getStudentMyTimetable(semester),
+      PreferenceService.getStudentInstituteTimetable(semester),
+    ]);
+
+    const messages = [];
+
+    if (myRes.status === "fulfilled") {
+      setMyInfo(myRes.value?.student || { department: "", year: "", section: "" });
+      setMyTimetable(myRes.value?.timetable || []);
+    } else {
+      setMyInfo({ department: "", year: "", section: "" });
+      setMyTimetable([]);
+      const msg = myRes.reason?.response?.data?.message || "Failed to load your timetable.";
+      messages.push(msg);
     }
+
+    if (instituteRes.status === "fulfilled") {
+      setInstituteTimetable(instituteRes.value || []);
+    } else {
+      setInstituteTimetable([]);
+      const msg = instituteRes.reason?.response?.data?.message || "Failed to load institute timetable.";
+      messages.push(msg);
+    }
+
+    if (messages.length > 0) {
+      setError(messages.join(" "));
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {

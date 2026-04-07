@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import API from "../../services/api";
+import StudentService from "../../services/StudentService";
 
 const defaultSettings = {
   emailNotifications: true,
@@ -89,7 +89,7 @@ function toApiSettings(settings) {
   };
 }
 
-function Settings() {
+function Settings({ onSettingsUpdated }) {
   const [settings, setSettings] = useState(defaultSettings);
   const [savedSnapshot, setSavedSnapshot] = useState(defaultSettings);
   const [loading, setLoading] = useState(true);
@@ -101,10 +101,11 @@ function Settings() {
       setLoading(true);
       setStatus({ type: "", text: "" });
       try {
-        const res = await API.get("/student/settings");
+        const res = await StudentService.getSettings();
         const mapped = fromApiSettings(res.data?.settings);
         setSettings(mapped);
         setSavedSnapshot(mapped);
+        onSettingsUpdated?.(mapped);
       } catch {
         setStatus({ type: "error", text: "Failed to load settings from server." });
       } finally {
@@ -129,10 +130,11 @@ function Settings() {
     setSaving(true);
     setStatus({ type: "", text: "" });
     try {
-      const res = await API.put("/student/settings", toApiSettings(settings));
+      const res = await StudentService.updateSettings(toApiSettings(settings));
       const mapped = fromApiSettings(res.data?.settings);
       setSettings(mapped);
       setSavedSnapshot(mapped);
+      onSettingsUpdated?.(mapped);
       setStatus({ type: "success", text: "Settings saved successfully." });
     } catch (err) {
       const message = err.response?.data?.message || "Unable to save settings.";
@@ -146,10 +148,11 @@ function Settings() {
     setSaving(true);
     setStatus({ type: "", text: "" });
     try {
-      const res = await API.post("/student/settings/reset");
+      const res = await StudentService.resetSettings();
       const mapped = fromApiSettings(res.data?.settings);
       setSettings(mapped);
       setSavedSnapshot(mapped);
+      onSettingsUpdated?.(mapped);
       setStatus({ type: "success", text: "Settings reset to defaults." });
     } catch (err) {
       const message = err.response?.data?.message || "Unable to reset settings.";

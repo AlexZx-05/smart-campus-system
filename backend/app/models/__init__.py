@@ -7,3 +7,9 @@ from .room import Room
 from .admin_message import AdminMessage
 from .conflict_request import ConflictRequest
 from .admin_activity_log import AdminActivityLog
+from .support_query import SupportQuery
+from .faculty_peer_message import FacultyPeerMessage
+from .assignment import Assignment
+from .assignment_submission import AssignmentSubmission
+from .assignment_reminder_log import AssignmentReminderLog
+from .course_enrollment import CourseEnrollment

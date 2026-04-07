@@ -3,6 +3,7 @@ import PreferenceService from "../../services/PreferenceService";
 
 function Notifications() {
   const [messages, setMessages] = useState([]);
+  const [assignmentReminders, setAssignmentReminders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -10,8 +11,12 @@ function Notifications() {
     setLoading(true);
     setError("");
     try {
-      const data = await PreferenceService.getInboxMessages();
+      const [data, reminders] = await Promise.all([
+        PreferenceService.getInboxMessages(),
+        PreferenceService.getStudentAssignmentReminders(),
+      ]);
       setMessages(data || []);
+      setAssignmentReminders(reminders || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load notifications.");
     } finally {
@@ -28,7 +33,7 @@ function Notifications() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-slate-800">Notifications</h3>
-          <p className="text-sm text-slate-500 mt-2">Admin announcements for students.</p>
+          <p className="text-sm text-slate-500 mt-2">Assignment reminders and admin announcements for students.</p>
         </div>
         <button
           type="button"
@@ -46,9 +51,40 @@ function Notifications() {
           {error}
         </div>
       ) : messages.length === 0 ? (
-        <p className="text-sm text-slate-500 mt-4">No notifications yet.</p>
+        <div className="mt-4 space-y-3">
+          {assignmentReminders.length > 0 ? (
+            assignmentReminders.map((item) => (
+              <div key={`reminder-${item.id}`} className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-amber-800">Assignment Reminder: {item.title}</p>
+                  <span className="text-xs rounded-full px-2.5 py-1 bg-amber-100 text-amber-700 border border-amber-200">
+                    reminder
+                  </span>
+                </div>
+                <p className="text-xs text-amber-700 mt-1">
+                  Subject: {item.subject} | Due: {new Date(item.due_at).toLocaleString()} | By {item.created_by_name}
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-slate-500">No notifications yet.</p>
+          )}
+        </div>
       ) : (
         <div className="mt-4 space-y-3">
+          {assignmentReminders.map((item) => (
+            <div key={`reminder-${item.id}`} className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-amber-800">Assignment Reminder: {item.title}</p>
+                <span className="text-xs rounded-full px-2.5 py-1 bg-amber-100 text-amber-700 border border-amber-200">
+                  reminder
+                </span>
+              </div>
+              <p className="text-xs text-amber-700 mt-1">
+                Subject: {item.subject} | Due: {new Date(item.due_at).toLocaleString()} | By {item.created_by_name}
+              </p>
+            </div>
+          ))}
           {messages.map((msg) => (
             <div key={msg.id} className="rounded-lg border border-slate-200 p-4">
               <div className="flex items-center justify-between gap-3">

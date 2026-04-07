@@ -128,6 +128,47 @@ const PreferenceService = {
     return response.data;
   },
 
+  getFacultyDirectory: async (q) => {
+    const response = await API.get("/faculty/directory", {
+      params: q ? { q } : {},
+    });
+    return response.data;
+  },
+
+  sendFacultyPeerMessage: async (payload) => {
+    const response = await API.post("/faculty/messages", payload);
+    return response.data;
+  },
+
+  getFacultyPeerInbox: async () => {
+    const response = await API.get("/faculty/messages/inbox");
+    return response.data;
+  },
+
+  createSupportQuery: async (payload) => {
+    const response = await API.post("/messages/queries", payload);
+    return response.data;
+  },
+
+  getMySupportQueries: async () => {
+    const response = await API.get("/messages/queries/me");
+    return response.data;
+  },
+
+  getAdminSupportQueries: async ({ status, sender_role, priority } = {}) => {
+    const params = {};
+    if (status) params.status = status;
+    if (sender_role) params.sender_role = sender_role;
+    if (priority) params.priority = priority;
+    const response = await API.get("/admin/messages/queries", { params });
+    return response.data;
+  },
+
+  updateAdminSupportQuery: async (queryId, payload) => {
+    const response = await API.patch(`/admin/messages/queries/${queryId}`, payload);
+    return response.data;
+  },
+
   getAdminDashboardOverview: async (semester) => {
     const response = await API.get("/admin/dashboard/overview", {
       params: semester ? { semester } : {},
@@ -176,6 +217,51 @@ const PreferenceService = {
     return response.data;
   },
 
+  getFacultyRoomLiveStatus: async (semester) => {
+    const response = await API.get("/faculty/rooms/live-status", {
+      params: semester ? { semester } : {},
+    });
+    return response.data;
+  },
+
+  getFacultyConflicts: async () => {
+    const response = await API.get("/faculty/conflicts");
+    return response.data;
+  },
+
+  createFacultyConflict: async (payload) => {
+    const response = await API.post("/faculty/conflicts", payload);
+    return response.data;
+  },
+
+  createFacultyAssignment: async (formData) => {
+    const response = await API.post("/faculty/assignments", formData);
+    return response.data;
+  },
+
+  getFacultyAssignments: async () => {
+    const response = await API.get("/faculty/assignments");
+    return response.data;
+  },
+
+  getFacultyAssignmentSubmissions: async (assignmentId) => {
+    const response = await API.get(`/faculty/assignments/${assignmentId}/submissions`);
+    return response.data;
+  },
+
+  reviewFacultyAssignmentSubmission: async (submissionId, payload) => {
+    const response = await API.patch(`/faculty/assignments/submissions/${submissionId}`, payload);
+    return response.data;
+  },
+
+  getFacultyCourseEnrollments: async ({ subject, semester } = {}) => {
+    const params = {};
+    if (subject) params.subject = subject;
+    if (semester) params.semester = semester;
+    const response = await API.get("/faculty/course-enrollments", { params });
+    return response.data;
+  },
+
   getStudentMyTimetable: async (semester) => {
     const response = await API.get("/student/timetable/my", {
       params: semester ? { semester } : {},
@@ -187,6 +273,43 @@ const PreferenceService = {
     const response = await API.get("/student/timetable/institute", {
       params: semester ? { semester } : {},
     });
+    return response.data;
+  },
+
+  getStudentRoomLiveStatus: async (semester) => {
+    const response = await API.get("/student/rooms/live-status", {
+      params: semester ? { semester } : {},
+    });
+    return response.data;
+  },
+
+  getStudentAssignments: async () => {
+    const response = await API.get("/student/assignments");
+    return response.data;
+  },
+
+  getStudentCourseEnrollments: async () => {
+    const response = await API.get("/student/course-enrollments");
+    return response.data;
+  },
+
+  createStudentCourseEnrollment: async (payload) => {
+    const response = await API.post("/student/course-enrollments", payload);
+    return response.data;
+  },
+
+  deleteStudentCourseEnrollment: async (enrollmentId) => {
+    const response = await API.delete(`/student/course-enrollments/${enrollmentId}`);
+    return response.data;
+  },
+
+  getStudentAssignmentReminders: async () => {
+    const response = await API.get("/student/assignments/reminders");
+    return response.data;
+  },
+
+  submitStudentAssignment: async (assignmentId, formData) => {
+    const response = await API.post(`/student/assignments/${assignmentId}/submission`, formData);
     return response.data;
   },
 };

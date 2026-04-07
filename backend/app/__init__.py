@@ -23,6 +23,39 @@ def _ensure_user_profile_image_column():
         db.session.commit()
 
 
+def _ensure_user_auth_columns():
+    columns = db.session.execute(text("PRAGMA table_info(user)")).fetchall()
+    column_names = [col[1] for col in columns]
+
+    if "phone_number" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN phone_number VARCHAR(20)"))
+        db.session.commit()
+    if "otp_window_started_at" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN otp_window_started_at DATETIME"))
+        db.session.commit()
+    if "otp_request_count_hour" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN otp_request_count_hour INTEGER DEFAULT 0"))
+        db.session.execute(
+            text(
+                "UPDATE user SET otp_request_count_hour = 0 "
+                "WHERE otp_request_count_hour IS NULL"
+            )
+        )
+        db.session.commit()
+    if "otp_last_requested_at" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN otp_last_requested_at DATETIME"))
+        db.session.commit()
+    if "otp_failed_attempts" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN otp_failed_attempts INTEGER DEFAULT 0"))
+        db.session.execute(
+            text("UPDATE user SET otp_failed_attempts = 0 WHERE otp_failed_attempts IS NULL")
+        )
+        db.session.commit()
+    if "otp_last_verified_at" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN otp_last_verified_at DATETIME"))
+        db.session.commit()
+
+
 def _ensure_faculty_preference_columns():
     table = db.session.execute(
         text("SELECT name FROM sqlite_master WHERE type='table' AND name='faculty_preference'")
@@ -46,6 +79,12 @@ def _ensure_faculty_preference_columns():
         db.session.commit()
     if "section" not in column_names:
         db.session.execute(text("ALTER TABLE faculty_preference ADD COLUMN section VARCHAR(10)"))
+        db.session.commit()
+    if "created_at" not in column_names:
+        db.session.execute(text("ALTER TABLE faculty_preference ADD COLUMN created_at DATETIME"))
+        db.session.execute(
+            text("UPDATE faculty_preference SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
+        )
         db.session.commit()
 
 
@@ -91,6 +130,7 @@ def create_app():
     with app.app_context():
         db.create_all()
         _ensure_user_profile_image_column()
+        _ensure_user_auth_columns()
         _ensure_faculty_preference_columns()
         _ensure_default_rooms()
 

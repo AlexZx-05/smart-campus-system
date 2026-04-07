@@ -8,7 +8,12 @@ student_bp = Blueprint("student", __name__)
 @jwt_required()
 def student_dashboard():
     user_id = get_jwt_identity()
-    user = User.query.get(int(user_id))
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "Invalid authentication token"}), 401
+
+    user = User.query.get(user_id_int)
 
     if not user or user.role != "student":
         return jsonify({"message": "Unauthorized"}), 403

@@ -16,10 +16,28 @@ function CalendarIcon() {
   );
 }
 
+function TimetableIcon() {
+  return (
+    <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9h18M8 4v4M16 4v4M8 13h3M13 13h3M8 17h3M13 17h3" />
+    </svg>
+  );
+}
+
 function BuildingIcon() {
   return (
     <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M3 21h18M5 21V7l7-4 7 4v14M9 10h.01M15 10h.01M9 14h.01M15 14h.01" />
+    </svg>
+  );
+}
+
+function ClassesIcon() {
+  return (
+    <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 6h16M4 12h16M4 18h16" />
+      <path d="M7 4v16M17 4v16" />
     </svg>
   );
 }
@@ -38,6 +56,25 @@ function ClipboardIcon() {
     <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M9 4h6l1 2h3v14H5V6h3l1-2Z" />
       <path d="M9 12h6M9 16h4" />
+    </svg>
+  );
+}
+
+function PreferenceIcon() {
+  return (
+    <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="6" y="4" width="12" height="16" rx="2" />
+      <path d="M9 8h6M9 12h6M9 16h4" />
+      <path d="M9 3h6v3H9z" />
+    </svg>
+  );
+}
+
+function BookOpenIcon() {
+  return (
+    <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 6.5c-1.5-1.4-3.4-2.1-5.8-2.1C4.4 4.4 3 4.8 3 4.8V19s1.4-.5 3.2-.5c2.4 0 4.3.7 5.8 2.1" />
+      <path d="M12 6.5c1.5-1.4 3.4-2.1 5.8-2.1 1.8 0 3.2.4 3.2.4V19s-1.4-.5-3.2-.5c-2.4 0-4.3.7-5.8 2.1" />
     </svg>
   );
 }
@@ -110,20 +147,23 @@ function ConflictIcon() {
 
 const icons = {
   dashboard: DashboardIcon,
-  preferences: ClipboardIcon,
-  timetable: CalendarIcon,
+  preferences: PreferenceIcon,
+  timetable: TimetableIcon,
   "institute-timetable": CalendarIcon,
-  "my-timetable": CalendarIcon,
-  "all-classes": BuildingIcon,
+  "my-timetable": TimetableIcon,
+  "all-classes": ClassesIcon,
   rooms: BuildingIcon,
   users: UsersIcon,
   messages: MessageIcon,
   conflicts: ConflictIcon,
   notifications: BellIcon,
-  assignments: ClipboardIcon,
+  assignments: BookOpenIcon,
   progress: ChartIcon,
   queries: ChatIcon,
+  teachers: UsersIcon,
   calendar: CalendarIcon,
+  calender: CalendarIcon,
+  "calendar-control": CalendarIcon,
   profile: UserIcon,
   settings: SettingsIcon,
 };

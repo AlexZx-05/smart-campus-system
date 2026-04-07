@@ -1,8 +1,381 @@
+import { useEffect, useMemo, useState } from "react";
+import PreferenceService from "../../services/PreferenceService";
+
 function Assignments() {
+  const [assignments, setAssignments] = useState([]);
+  const [reminders, setReminders] = useState([]);
+  const [enrollments, setEnrollments] = useState([]);
+  const [teachers, setTeachers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [enrollForm, setEnrollForm] = useState({
+    faculty_id: "",
+    subject: "",
+    semester: "",
+  });
+  const [enrolling, setEnrolling] = useState(false);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState(null);
+  const [submissionForm, setSubmissionForm] = useState({
+    submission_text: "",
+    resource_links: "",
+    attachment: null,
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadAssignments = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [assignmentRes, reminderRes, enrollmentRes, teacherRes] = await Promise.allSettled([
+        PreferenceService.getStudentAssignments(),
+        PreferenceService.getStudentAssignmentReminders(),
+        PreferenceService.getStudentCourseEnrollments(),
+        PreferenceService.getFacultyDirectory(),
+      ]);
+
+      const assignmentRows = assignmentRes.status === "fulfilled" ? (assignmentRes.value || []) : [];
+      const reminderRows = reminderRes.status === "fulfilled" ? (reminderRes.value || []) : [];
+      const enrollmentRows = enrollmentRes.status === "fulfilled" ? (enrollmentRes.value || []) : [];
+      const teacherRows = teacherRes.status === "fulfilled" ? (teacherRes.value || []) : [];
+
+      if (assignmentRes.status === "rejected") {
+        setError(assignmentRes.reason?.response?.data?.message || "Failed to load assignments.");
+      } else if (teacherRes.status === "rejected") {
+        setError("Teacher list could not be loaded right now. You can still view existing assignments.");
+      }
+
+      setAssignments(assignmentRows);
+      setReminders(reminderRows);
+      setEnrollments(enrollmentRows);
+      setTeachers(teacherRows);
+      setEnrollForm((prev) => ({
+        ...prev,
+        faculty_id: prev.faculty_id || String(teacherRows[0]?.id || ""),
+      }));
+      setSelectedAssignmentId((prev) => prev || assignmentRows[0]?.id || null);
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to load assignments.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAssignments();
+  }, []);
+
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = setTimeout(() => setMessage(""), 2200);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  const selectedAssignment = useMemo(
+    () => assignments.find((item) => item.id === selectedAssignmentId) || null,
+    [assignments, selectedAssignmentId]
+  );
+
+  useEffect(() => {
+    if (!selectedAssignment) return;
+    const links = (selectedAssignment.my_submission?.resource_links || []).join("\n");
+    setSubmissionForm({
+      submission_text: selectedAssignment.my_submission?.submission_text || "",
+      resource_links: links,
+      attachment: null,
+    });
+  }, [selectedAssignmentId, selectedAssignment]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedAssignment) return;
+
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("submission_text", submissionForm.submission_text || "");
+      formData.append("resource_links", submissionForm.resource_links || "");
+      if (submissionForm.attachment) {
+        formData.append("attachment", submissionForm.attachment);
+      }
+      const res = await PreferenceService.submitStudentAssignment(selectedAssignment.id, formData);
+      setMessage(res.message || "Assignment submitted.");
+      await loadAssignments();
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to submit assignment.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitEnrollment = async (e) => {
+    e.preventDefault();
+    setEnrolling(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await PreferenceService.createStudentCourseEnrollment({
+        faculty_id: Number(enrollForm.faculty_id),
+        subject: enrollForm.subject,
+        semester: enrollForm.semester || null,
+      });
+      setMessage(res.message || "Enrollment created.");
+      setEnrollForm((prev) => ({ ...prev, subject: "", semester: "" }));
+      await loadAssignments();
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to enroll in course.");
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
+  const removeEnrollment = async (id) => {
+    setError("");
+    setMessage("");
+    try {
+      const res = await PreferenceService.deleteStudentCourseEnrollment(id);
+      setMessage(res.message || "Enrollment removed.");
+      await loadAssignments();
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to remove enrollment.");
+    }
+  };
+
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-      <h3 className="text-lg font-semibold text-slate-800">Assignments</h3>
-      <p className="text-sm text-slate-500 mt-2">Submission status and due dates will be added here.</p>
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+        <h3 className="text-lg font-semibold text-slate-800">Course Enrollment</h3>
+        <p className="text-sm text-slate-500 mt-1">
+          Only enrolled courses (teacher + subject + semester) will show assignments and reminders.
+        </p>
+        <form onSubmit={submitEnrollment} className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-2">
+          <select
+            value={enrollForm.faculty_id}
+            onChange={(e) => setEnrollForm((prev) => ({ ...prev, faculty_id: e.target.value }))}
+            className="rounded-lg border border-slate-300 px-3 py-2.5"
+            required
+          >
+            <option value="" disabled>
+              Select teacher
+            </option>
+            {teachers.map((teacher) => (
+              <option key={teacher.id} value={teacher.id}>
+                {teacher.name} ({teacher.email})
+              </option>
+            ))}
+          </select>
+          <input
+            value={enrollForm.subject}
+            onChange={(e) => setEnrollForm((prev) => ({ ...prev, subject: e.target.value }))}
+            className="rounded-lg border border-slate-300 px-3 py-2.5"
+            placeholder="Subject (exact)"
+            required
+          />
+          <input
+            value={enrollForm.semester}
+            onChange={(e) => setEnrollForm((prev) => ({ ...prev, semester: e.target.value }))}
+            className="rounded-lg border border-slate-300 px-3 py-2.5"
+            placeholder="Semester (optional)"
+          />
+          <button
+            type="submit"
+            disabled={enrolling}
+            className={`rounded-lg bg-slate-900 text-white px-4 py-2.5 hover:bg-slate-800 ${
+              enrolling ? "opacity-60 cursor-not-allowed" : ""
+            }`}
+          >
+            {enrolling ? "Enrolling..." : "Enroll Course"}
+          </button>
+        </form>
+
+        {enrollments.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {enrollments.map((row) => (
+              <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
+                <p className="text-sm text-slate-700">
+                  {row.subject} | {row.semester || "Any semester"} | {row.faculty_name}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => removeEnrollment(row.id)}
+                  className="text-xs rounded-md bg-red-50 text-red-700 border border-red-200 px-2.5 py-1.5 hover:bg-red-100"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {reminders.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-semibold text-amber-800">Reminder: Upcoming deadlines</p>
+          <p className="text-sm text-amber-700 mt-1">
+            {reminders.length} assignment(s) are scheduled for reminder today.
+          </p>
+        </div>
+      )}
+
+      {message && (
+        <div className="rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">{message}</div>
+      )}
+      {error && (
+        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {loading ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <p className="text-sm text-slate-500">Loading assignments...</p>
+        </div>
+      ) : assignments.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <h3 className="text-lg font-semibold text-slate-800">Assignments</h3>
+          <p className="text-sm text-slate-500 mt-2">
+            No assignments found for your enrolled courses. Enroll in a course above first.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="xl:col-span-2 space-y-3">
+            {assignments.map((assignment) => (
+              <button
+                key={assignment.id}
+                type="button"
+                onClick={() => setSelectedAssignmentId(assignment.id)}
+                className={`w-full text-left rounded-xl border p-4 shadow-sm transition ${
+                  assignment.id === selectedAssignmentId
+                    ? "border-blue-300 bg-blue-50"
+                    : "border-slate-200 bg-white hover:border-slate-300"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-base font-semibold text-slate-800">{assignment.title}</p>
+                    <p className="text-sm text-slate-600 mt-1">{assignment.subject}</p>
+                  </div>
+                  <span className="text-xs rounded-full border border-slate-300 bg-white px-2.5 py-1 text-slate-700">
+                    {assignment.my_submission ? assignment.my_submission.status : "pending"}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  Due: {new Date(assignment.due_at).toLocaleString()} | Faculty: {assignment.created_by_name}
+                </p>
+                {assignment.description && (
+                  <p className="text-sm text-slate-700 mt-2 line-clamp-2">{assignment.description}</p>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+            {!selectedAssignment ? (
+              <p className="text-sm text-slate-500">Select an assignment to view details.</p>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-800">{selectedAssignment.title}</h3>
+                  <p className="text-sm text-slate-600 mt-1">{selectedAssignment.subject}</p>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Due on {new Date(selectedAssignment.due_at).toLocaleString()}
+                  </p>
+                </div>
+
+                {selectedAssignment.description && (
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{selectedAssignment.description}</p>
+                )}
+
+                {selectedAssignment.resource_links?.length > 0 && (
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700">Reference Links</p>
+                    <div className="mt-2 space-y-1">
+                      {selectedAssignment.resource_links.map((link) => (
+                        <a
+                          key={link}
+                          href={link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block text-sm text-blue-600 hover:underline break-all"
+                        >
+                          {link}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {selectedAssignment.attachment_url && (
+                  <a
+                    href={selectedAssignment.attachment_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex text-sm text-blue-700 hover:underline"
+                  >
+                    Open teacher attachment: {selectedAssignment.attachment_name || "file"}
+                  </a>
+                )}
+
+                <form onSubmit={handleSubmit} className="space-y-3 pt-2 border-t border-slate-200">
+                  <textarea
+                    rows={4}
+                    value={submissionForm.submission_text}
+                    onChange={(e) =>
+                      setSubmissionForm((prev) => ({ ...prev, submission_text: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                    placeholder="Write your answer/work summary..."
+                  />
+                  <textarea
+                    rows={3}
+                    value={submissionForm.resource_links}
+                    onChange={(e) =>
+                      setSubmissionForm((prev) => ({ ...prev, resource_links: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                    placeholder="Submission links (one per line)"
+                  />
+                  <input
+                    type="file"
+                    onChange={(e) =>
+                      setSubmissionForm((prev) => ({ ...prev, attachment: e.target.files?.[0] || null }))
+                    }
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                  />
+                  {selectedAssignment.my_submission?.attachment_url && (
+                    <a
+                      href={selectedAssignment.my_submission.attachment_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block text-xs text-slate-600 hover:underline"
+                    >
+                      Last uploaded file: {selectedAssignment.my_submission.attachment_name}
+                    </a>
+                  )}
+                  {selectedAssignment.my_submission?.teacher_feedback && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs font-semibold text-slate-700">Teacher Feedback</p>
+                      <p className="text-sm text-slate-700 mt-1">
+                        {selectedAssignment.my_submission.teacher_feedback}
+                      </p>
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className={`w-full rounded-lg bg-blue-600 text-white px-4 py-2.5 hover:bg-blue-700 ${
+                      submitting ? "opacity-60 cursor-not-allowed" : ""
+                    }`}
+                  >
+                    {submitting ? "Submitting..." : "Submit / Update Work"}
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
