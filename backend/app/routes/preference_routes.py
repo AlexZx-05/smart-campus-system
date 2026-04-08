@@ -17,6 +17,8 @@ from app.models import (
     AssignmentSubmission,
     ConflictRequest,
     CourseEnrollment,
+    Classroom,
+    ClassroomMembership,
     Event,
     FacultyPreference,
     FacultyPeerMessage,
@@ -180,6 +182,13 @@ def _serialize_faculty_profile(user):
     }
 
 
+def _serialize_student_profile(user):
+    payload = _serialize_faculty_profile(user)
+    payload["year"] = user.year
+    payload["section"] = user.section
+    return payload
+
+
 def _serialize_student_settings(setting):
     return {
         "email_notifications": setting.email_notifications,
@@ -252,6 +261,9 @@ def _serialize_faculty_peer_message(row):
 
 def _serialize_support_query(row):
     sender = User.query.get(row.sender_id)
+    attachment_url = None
+    if row.attachment_path:
+        attachment_url = f"{request.host_url.rstrip('/')}{row.attachment_path}"
     return {
         "id": row.id,
         "sender_id": row.sender_id,
@@ -264,6 +276,10 @@ def _serialize_support_query(row):
         "priority": row.priority,
         "status": row.status,
         "admin_note": row.admin_note,
+        "attachment_path": row.attachment_path,
+        "attachment_name": row.attachment_name,
+        "attachment_mime": row.attachment_mime,
+        "attachment_url": attachment_url,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
@@ -549,6 +565,45 @@ def _serialize_course_enrollment(row):
         "semester": row.semester,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def _serialize_classroom(row):
+    faculty = User.query.get(row.faculty_id)
+    cover_image_url = None
+    if row.cover_image_path:
+        cover_image_url = f"{request.host_url.rstrip('/')}{row.cover_image_path}"
+
+    return {
+        "id": row.id,
+        "faculty_id": row.faculty_id,
+        "faculty_name": faculty.name if faculty else "Faculty",
+        "faculty_email": faculty.email if faculty else None,
+        "title": row.title,
+        "subject": row.subject,
+        "semester": row.semester,
+        "department": row.department,
+        "year": row.year,
+        "section": row.section,
+        "description": row.description,
+        "join_link": row.join_link,
+        "cover_image_path": row.cover_image_path,
+        "cover_image_name": row.cover_image_name,
+        "cover_image_mime": row.cover_image_mime,
+        "cover_image_url": cover_image_url,
+        "is_active": row.is_active,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _is_classroom_targeted_to_student(classroom, student):
+    if classroom.department and (student.department or "").strip().lower() != classroom.department.strip().lower():
+        return False
+    if classroom.year and student.year != classroom.year:
+        return False
+    if classroom.section and (student.section or "").strip().upper() != classroom.section.strip().upper():
+        return False
+    return True
 
 
 def _normalize_text_key(value):
@@ -1491,7 +1546,7 @@ def get_student_profile():
     user = _get_current_user()
     if not user or user.role != "student":
         return jsonify({"message": "Forbidden"}), 403
-    return jsonify(_serialize_faculty_profile(user)), 200
+    return jsonify(_serialize_student_profile(user)), 200
 
 
 @preference_bp.route("/api/student/profile", methods=["PATCH"])
@@ -1530,7 +1585,7 @@ def update_student_profile():
     user.year = year
     user.section = section.upper() if section else None
     db.session.commit()
-    return jsonify({"message": "Profile updated successfully", "profile": _serialize_faculty_profile(user)}), 200
+    return jsonify({"message": "Profile updated successfully", "profile": _serialize_student_profile(user)}), 200
 
 
 @preference_bp.route("/api/student/profile/photo", methods=["POST"])
@@ -1540,13 +1595,24 @@ def upload_student_profile_photo():
     if not user or user.role != "student":
         return jsonify({"message": "Forbidden"}), 403
 
-    file = request.files.get("file")
+    file = request.files.get("file") or request.files.get("photo")
     if not file or not file.filename:
         return jsonify({"message": "file is required"}), 400
 
     filename = secure_filename(file.filename)
     if not filename:
         return jsonify({"message": "Invalid filename"}), 400
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in {"png", "jpg", "jpeg", "webp"}:
+        return jsonify({"message": "Photo must be PNG/JPG/JPEG/WEBP"}), 400
+
+    # Enforce a reasonable upload limit (5 MB) for profile pictures.
+    file.stream.seek(0, os.SEEK_END)
+    size = file.stream.tell()
+    file.stream.seek(0)
+    if size > 5 * 1024 * 1024:
+        return jsonify({"message": "Photo must be 5 MB or smaller"}), 400
 
     unique_name = f"{uuid.uuid4().hex}_{filename}"
     upload_path = os.path.join(current_app.config["UPLOAD_FOLDER"], unique_name)
@@ -1557,7 +1623,35 @@ def upload_student_profile_photo():
 
     return jsonify({
         "message": "Profile photo uploaded successfully",
-        "profile": _serialize_faculty_profile(user)
+        "profile": _serialize_student_profile(user)
+    }), 200
+
+
+@preference_bp.route("/api/student/profile/photo", methods=["DELETE"])
+@jwt_required()
+def delete_student_profile_photo():
+    user = _get_current_user()
+    if not user or user.role != "student":
+        return jsonify({"message": "Forbidden"}), 403
+
+    if not user.profile_image:
+        return jsonify({"message": "No profile photo to remove", "profile": _serialize_student_profile(user)}), 200
+
+    old_path = user.profile_image
+    user.profile_image = None
+    db.session.commit()
+
+    try:
+        filename = os.path.basename(old_path)
+        file_path = os.path.join(current_app.config["UPLOAD_FOLDER"], filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+    except OSError:
+        pass
+
+    return jsonify({
+        "message": "Profile photo removed successfully",
+        "profile": _serialize_student_profile(user)
     }), 200
 
 
@@ -1827,7 +1921,7 @@ def create_support_query():
     if user.role not in {"student", "faculty"}:
         return jsonify({"message": "Only students and faculty can raise queries"}), 403
 
-    data = request.get_json() or {}
+    data = request.form if request.form else (request.get_json() or {})
     subject = (data.get("subject") or "").strip()
     body = (data.get("body") or "").strip()
     category = (data.get("category") or "general").strip().lower()
@@ -1846,6 +1940,38 @@ def create_support_query():
     if priority not in valid_priorities:
         return jsonify({"message": "priority must be low, normal, or high"}), 400
 
+    attachment = request.files.get("attachment")
+    attachment_path = None
+    attachment_name = None
+    attachment_mime = None
+    if attachment and attachment.filename:
+        safe_name = secure_filename(attachment.filename)
+        if not safe_name:
+            return jsonify({"message": "Invalid attachment filename"}), 400
+
+        allowed_ext = {"png", "jpg", "jpeg", "webp"}
+        ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+        if ext not in allowed_ext:
+            return jsonify({"message": "Only PNG, JPG, JPEG, and WEBP images are allowed"}), 400
+
+        mime = (attachment.mimetype or "").lower()
+        if not mime.startswith("image/"):
+            return jsonify({"message": "Attachment must be an image file"}), 400
+
+        # 5 MB max for query screenshots.
+        attachment.stream.seek(0, os.SEEK_END)
+        size_bytes = attachment.stream.tell()
+        attachment.stream.seek(0)
+        if size_bytes > 5 * 1024 * 1024:
+            return jsonify({"message": "Image size must be 5 MB or less"}), 400
+
+        unique_name = f"query_{uuid.uuid4().hex}_{safe_name}"
+        upload_path = os.path.join(current_app.config["UPLOAD_FOLDER"], unique_name)
+        attachment.save(upload_path)
+        attachment_path = f"/uploads/{unique_name}"
+        attachment_name = safe_name
+        attachment_mime = mime
+
     row = SupportQuery(
         sender_id=user.id,
         sender_role=user.role,
@@ -1854,6 +1980,9 @@ def create_support_query():
         category=category,
         priority=priority,
         status="open",
+        attachment_path=attachment_path,
+        attachment_name=attachment_name,
+        attachment_mime=attachment_mime,
     )
     db.session.add(row)
     db.session.commit()
@@ -2113,6 +2242,198 @@ def delete_student_course_enrollment(enrollment_id):
     db.session.delete(row)
     db.session.commit()
     return jsonify({"message": "Enrollment removed."}), 200
+
+
+@preference_bp.route("/api/faculty/classrooms", methods=["POST"])
+@jwt_required()
+def create_faculty_classroom():
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    data = request.form if request.form else (request.get_json() or {})
+    title = (data.get("title") or "").strip()
+    subject = (data.get("subject") or "").strip()
+    join_link = (data.get("join_link") or "").strip()
+    semester = (data.get("semester") or "").strip() or None
+    department = (data.get("department") or user.department or "").strip() or None
+    year = _parse_int(data.get("year"))
+    section = (data.get("section") or "").strip() or None
+    description = (data.get("description") or "").strip() or None
+
+    if not title:
+        return jsonify({"message": "title is required"}), 400
+    if len(title) > 200:
+        return jsonify({"message": "title must be 200 characters or fewer"}), 400
+    if not subject:
+        return jsonify({"message": "subject is required"}), 400
+    if not join_link:
+        join_link = "https://classroom.google.com"
+    elif not (join_link.startswith("http://") or join_link.startswith("https://")):
+        return jsonify({"message": "join_link must start with http:// or https://"}), 400
+    if year is not None and (year < 1 or year > 8):
+        return jsonify({"message": "year must be between 1 and 8"}), 400
+
+    cover = request.files.get("cover_image")
+    cover_image_path = None
+    cover_image_name = None
+    cover_image_mime = None
+    if cover and cover.filename:
+        safe_name = secure_filename(cover.filename)
+        if not safe_name:
+            return jsonify({"message": "Invalid cover image filename"}), 400
+        ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+        if ext not in {"png", "jpg", "jpeg", "webp"}:
+            return jsonify({"message": "Cover image must be png/jpg/jpeg/webp"}), 400
+        if not (cover.mimetype or "").lower().startswith("image/"):
+            return jsonify({"message": "Cover must be an image"}), 400
+        unique_name = f"classroom_{uuid.uuid4().hex}_{safe_name}"
+        upload_path = os.path.join(current_app.config["UPLOAD_FOLDER"], unique_name)
+        cover.save(upload_path)
+        cover_image_path = f"/uploads/{unique_name}"
+        cover_image_name = safe_name
+        cover_image_mime = cover.mimetype
+
+    row = Classroom(
+        faculty_id=user.id,
+        title=title,
+        subject=subject,
+        semester=semester,
+        department=department,
+        year=year,
+        section=section,
+        description=description,
+        join_link=join_link,
+        cover_image_path=cover_image_path,
+        cover_image_name=cover_image_name,
+        cover_image_mime=cover_image_mime,
+        is_active=True,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({"message": "Classroom created successfully.", "data": _serialize_classroom(row)}), 201
+
+
+@preference_bp.route("/api/faculty/classrooms", methods=["GET"])
+@jwt_required()
+def get_faculty_classrooms():
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    rows = (
+        Classroom.query
+        .filter(Classroom.faculty_id == user.id)
+        .order_by(Classroom.created_at.desc())
+        .all()
+    )
+    return jsonify([_serialize_classroom(row) for row in rows]), 200
+
+
+@preference_bp.route("/api/student/classrooms/invites", methods=["GET"])
+@jwt_required()
+def get_student_classroom_invites():
+    user = _get_current_user()
+    if not user or user.role != "student":
+        return jsonify({"message": "Forbidden"}), 403
+
+    joined_ids = {
+        row.classroom_id
+        for row in ClassroomMembership.query.filter(ClassroomMembership.student_id == user.id).all()
+    }
+
+    rows = (
+        Classroom.query
+        .filter(Classroom.is_active == True)  # noqa: E712
+        .order_by(Classroom.created_at.desc())
+        .all()
+    )
+
+    invites = []
+    for row in rows:
+        if row.id in joined_ids:
+            continue
+        if not _is_classroom_targeted_to_student(row, user):
+            continue
+        payload = _serialize_classroom(row)
+        payload["notification_message"] = (
+            f"{payload['faculty_name']} created classroom for {payload['subject']}. "
+            "Join now to access assignments and updates."
+        )
+        invites.append(payload)
+
+    return jsonify(invites), 200
+
+
+@preference_bp.route("/api/student/classrooms/joined", methods=["GET"])
+@jwt_required()
+def get_student_joined_classrooms():
+    user = _get_current_user()
+    if not user or user.role != "student":
+        return jsonify({"message": "Forbidden"}), 403
+
+    rows = (
+        ClassroomMembership.query
+        .filter(ClassroomMembership.student_id == user.id)
+        .order_by(ClassroomMembership.joined_at.desc())
+        .all()
+    )
+    payload = []
+    for row in rows:
+        classroom = Classroom.query.get(row.classroom_id)
+        if not classroom:
+            continue
+        item = _serialize_classroom(classroom)
+        item["joined_at"] = row.joined_at.isoformat() if row.joined_at else None
+        payload.append(item)
+    return jsonify(payload), 200
+
+
+@preference_bp.route("/api/student/classrooms/<int:classroom_id>/join", methods=["POST"])
+@jwt_required()
+def join_student_classroom(classroom_id):
+    user = _get_current_user()
+    if not user or user.role != "student":
+        return jsonify({"message": "Forbidden"}), 403
+
+    classroom = Classroom.query.get(classroom_id)
+    if not classroom or not classroom.is_active:
+        return jsonify({"message": "Classroom not found"}), 404
+    if not _is_classroom_targeted_to_student(classroom, user):
+        return jsonify({"message": "This classroom is not targeted for your class."}), 403
+
+    existing = ClassroomMembership.query.filter(
+        ClassroomMembership.classroom_id == classroom_id,
+        ClassroomMembership.student_id == user.id,
+    ).first()
+    if existing:
+        return jsonify({"message": "You already joined this classroom."}), 200
+
+    membership = ClassroomMembership(classroom_id=classroom_id, student_id=user.id)
+    db.session.add(membership)
+
+    enrollment_query = CourseEnrollment.query.filter(
+        CourseEnrollment.student_id == user.id,
+        CourseEnrollment.faculty_id == classroom.faculty_id,
+        func.lower(CourseEnrollment.subject) == _normalize_text_key(classroom.subject),
+    )
+    if classroom.semester:
+        enrollment_query = enrollment_query.filter(CourseEnrollment.semester == classroom.semester)
+    else:
+        enrollment_query = enrollment_query.filter(CourseEnrollment.semester.is_(None))
+
+    if not enrollment_query.first():
+        db.session.add(
+            CourseEnrollment(
+                student_id=user.id,
+                faculty_id=classroom.faculty_id,
+                subject=classroom.subject,
+                semester=classroom.semester,
+            )
+        )
+
+    db.session.commit()
+    return jsonify({"message": "Joined classroom successfully.", "data": _serialize_classroom(classroom)}), 201
 
 
 @preference_bp.route("/api/faculty/course-enrollments", methods=["GET"])

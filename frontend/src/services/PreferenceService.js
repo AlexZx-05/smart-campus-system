@@ -293,6 +293,31 @@ const PreferenceService = {
     return response.data;
   },
 
+  getFacultyClassrooms: async () => {
+    const response = await API.get("/faculty/classrooms");
+    return response.data;
+  },
+
+  createFacultyClassroom: async (formData) => {
+    const response = await API.post("/faculty/classrooms", formData);
+    return response.data;
+  },
+
+  getStudentClassroomInvites: async () => {
+    const response = await API.get("/student/classrooms/invites");
+    return response.data;
+  },
+
+  getStudentJoinedClassrooms: async () => {
+    const response = await API.get("/student/classrooms/joined");
+    return response.data;
+  },
+
+  joinStudentClassroom: async (classroomId) => {
+    const response = await API.post(`/student/classrooms/${classroomId}/join`);
+    return response.data;
+  },
+
   createStudentCourseEnrollment: async (payload) => {
     const response = await API.post("/student/course-enrollments", payload);
     return response.data;

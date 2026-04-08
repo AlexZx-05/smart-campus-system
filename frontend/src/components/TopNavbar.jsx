@@ -1,10 +1,12 @@
 function TopNavbar({ title, userName, userAvatarUrl, onLogout, theme, onThemeToggle, onProfileClick }) {
-  const initials = (userName || "User")
-    .split(" ")
-    .map((p) => p[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  const nameParts = (userName || "User")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const firstName = nameParts[0] || "Student";
+  const initials = nameParts.length >= 2
+    ? `${nameParts[0][0] || ""}${nameParts[1][0] || ""}`.toUpperCase()
+    : (nameParts[0] || "U").slice(0, 2).toUpperCase();
 
   return (
     <header className="h-16 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-4 md:px-6 flex items-center justify-between sticky top-0 z-30 transition-colors">
@@ -53,7 +55,7 @@ function TopNavbar({ title, userName, userAvatarUrl, onLogout, theme, onThemeTog
               {initials}
             </div>
           )}
-          <div className="text-sm text-slate-600 dark:text-slate-300">Hi, {userName || "Student"}</div>
+          <div className="text-sm text-slate-600 dark:text-slate-300">Hi, {firstName}</div>
         </button>
         <button
           onClick={onLogout}

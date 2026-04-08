@@ -88,6 +88,27 @@ def _ensure_faculty_preference_columns():
         db.session.commit()
 
 
+def _ensure_support_query_attachment_columns():
+    table = db.session.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name='support_query'")
+    ).fetchone()
+    if not table:
+        return
+
+    columns = db.session.execute(text("PRAGMA table_info(support_query)")).fetchall()
+    column_names = [col[1] for col in columns]
+
+    if "attachment_path" not in column_names:
+        db.session.execute(text("ALTER TABLE support_query ADD COLUMN attachment_path VARCHAR(255)"))
+        db.session.commit()
+    if "attachment_name" not in column_names:
+        db.session.execute(text("ALTER TABLE support_query ADD COLUMN attachment_name VARCHAR(255)"))
+        db.session.commit()
+    if "attachment_mime" not in column_names:
+        db.session.execute(text("ALTER TABLE support_query ADD COLUMN attachment_mime VARCHAR(120)"))
+        db.session.commit()
+
+
 def _ensure_default_rooms():
     if Room.query.count() > 0:
         return
@@ -132,6 +153,7 @@ def create_app():
         _ensure_user_profile_image_column()
         _ensure_user_auth_columns()
         _ensure_faculty_preference_columns()
+        _ensure_support_query_attachment_columns()
         _ensure_default_rooms()
 
     return app

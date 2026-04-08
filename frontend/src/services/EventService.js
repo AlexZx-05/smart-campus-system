@@ -1,8 +1,19 @@
 import API from "./api";
 
 const EventService = {
-  getEvents: async () => {
-    const response = await API.get("/events");
+  getEvents: async (params = {}) => {
+    const cleanParams = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")
+    );
+    const response = await API.get("/events", { params: cleanParams });
+    return response.data;
+  },
+
+  getIndiaHolidays: async (params = {}) => {
+    const cleanParams = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")
+    );
+    const response = await API.get("/holidays/india", { params: cleanParams });
     return response.data;
   },
 
@@ -23,4 +34,3 @@ const EventService = {
 };
 
 export default EventService;
-

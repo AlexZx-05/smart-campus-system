@@ -6,6 +6,9 @@ function Assignments() {
   const [reminders, setReminders] = useState([]);
   const [enrollments, setEnrollments] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [classroomInvites, setClassroomInvites] = useState([]);
+  const [joinedClassrooms, setJoinedClassrooms] = useState([]);
+  const [joiningClassroomId, setJoiningClassroomId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -27,17 +30,21 @@ function Assignments() {
     setLoading(true);
     setError("");
     try {
-      const [assignmentRes, reminderRes, enrollmentRes, teacherRes] = await Promise.allSettled([
+      const [assignmentRes, reminderRes, enrollmentRes, teacherRes, classroomInvRes, joinedClassRes] = await Promise.allSettled([
         PreferenceService.getStudentAssignments(),
         PreferenceService.getStudentAssignmentReminders(),
         PreferenceService.getStudentCourseEnrollments(),
         PreferenceService.getFacultyDirectory(),
+        PreferenceService.getStudentClassroomInvites(),
+        PreferenceService.getStudentJoinedClassrooms(),
       ]);
 
       const assignmentRows = assignmentRes.status === "fulfilled" ? (assignmentRes.value || []) : [];
       const reminderRows = reminderRes.status === "fulfilled" ? (reminderRes.value || []) : [];
       const enrollmentRows = enrollmentRes.status === "fulfilled" ? (enrollmentRes.value || []) : [];
       const teacherRows = teacherRes.status === "fulfilled" ? (teacherRes.value || []) : [];
+      const classroomInviteRows = classroomInvRes.status === "fulfilled" ? (classroomInvRes.value || []) : [];
+      const joinedClassroomRows = joinedClassRes.status === "fulfilled" ? (joinedClassRes.value || []) : [];
 
       if (assignmentRes.status === "rejected") {
         setError(assignmentRes.reason?.response?.data?.message || "Failed to load assignments.");
@@ -49,6 +56,8 @@ function Assignments() {
       setReminders(reminderRows);
       setEnrollments(enrollmentRows);
       setTeachers(teacherRows);
+      setClassroomInvites(classroomInviteRows);
+      setJoinedClassrooms(joinedClassroomRows);
       setEnrollForm((prev) => ({
         ...prev,
         faculty_id: prev.faculty_id || String(teacherRows[0]?.id || ""),
@@ -58,6 +67,21 @@ function Assignments() {
       setError(err.response?.data?.message || "Failed to load assignments.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const joinClassroom = async (classroomId) => {
+    setError("");
+    setMessage("");
+    setJoiningClassroomId(classroomId);
+    try {
+      const res = await PreferenceService.joinStudentClassroom(classroomId);
+      setMessage(res.message || "Joined classroom successfully.");
+      await loadAssignments();
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to join classroom.");
+    } finally {
+      setJoiningClassroomId(null);
     }
   };
 
@@ -209,6 +233,85 @@ function Assignments() {
           </div>
         )}
       </div>
+
+      {classroomInvites.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-800">Classroom Invitations</h3>
+              <p className="text-sm text-slate-500 mt-1">New classrooms created by teachers for your class.</p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {classroomInvites.map((room) => (
+              <div key={room.id} className="rounded-xl border border-slate-200 overflow-hidden">
+                <div
+                  className="h-24 px-4 py-3 text-white relative"
+                  style={{
+                    backgroundImage: room.cover_image_url
+                      ? `linear-gradient(120deg, rgba(14,116,144,0.78), rgba(30,64,175,0.68)), url('${room.cover_image_url}')`
+                      : "linear-gradient(120deg, #f97316, #1e3a8a)",
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }}
+                >
+                  <p className="text-sm font-semibold truncate">{room.title}</p>
+                  <p className="text-xs mt-1 opacity-90 truncate">{room.subject}</p>
+                  <p className="text-xs mt-1 opacity-90 truncate">{room.faculty_name}</p>
+                </div>
+                <div className="p-3">
+                  <p className="text-xs text-slate-500 line-clamp-2">
+                    {room.notification_message || "Teacher invited you to this classroom."}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => joinClassroom(room.id)}
+                      disabled={joiningClassroomId === room.id}
+                      className={`rounded-lg px-3 py-2 text-xs font-medium text-white ${
+                        joiningClassroomId === room.id ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
+                      }`}
+                    >
+                      {joiningClassroomId === room.id ? "Joining..." : "Join Classroom"}
+                    </button>
+                    <a
+                      href={room.join_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50"
+                    >
+                      Open Link
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {joinedClassrooms.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <h3 className="text-lg font-semibold text-slate-800">My Joined Classrooms</h3>
+          <div className="mt-3 space-y-2">
+            {joinedClassrooms.map((room) => (
+              <div key={room.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
+                <p className="text-sm text-slate-700 truncate">
+                  {room.title} | {room.subject} | {room.faculty_name}
+                </p>
+                <a
+                  href={room.join_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                >
+                  Open Classroom
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {reminders.length > 0 && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">

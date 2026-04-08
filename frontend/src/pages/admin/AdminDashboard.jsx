@@ -1746,6 +1746,28 @@ function AdminDashboard({ onLogout }) {
                       Category: {query.category} | Priority: {query.priority}
                     </p>
                     <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{query.body}</p>
+                    {query.attachment_url && (
+                      <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Attachment</p>
+                        {query.attachment_mime?.startsWith("image/") && (
+                          <a href={query.attachment_url} target="_blank" rel="noreferrer">
+                            <img
+                              src={query.attachment_url}
+                              alt={query.attachment_name || "query attachment"}
+                              className="mt-2 max-h-44 rounded-md border border-slate-200 object-cover"
+                            />
+                          </a>
+                        )}
+                        <a
+                          href={query.attachment_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 inline-block text-xs font-medium text-blue-700 hover:text-blue-800"
+                        >
+                          Open {query.attachment_name || "attachment"}
+                        </a>
+                      </div>
+                    )}
 
                     <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
                       <select

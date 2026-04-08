@@ -127,6 +127,31 @@ function FacultyDashboard({ onLogout }) {
   const [assignmentError, setAssignmentError] = useState("");
   const [submittingAssignment, setSubmittingAssignment] = useState(false);
   const assignmentFileInputRef = useRef(null);
+  const [classroomForm, setClassroomForm] = useState({
+    title: "",
+    subject: "",
+    semester: "Odd 2026",
+    department: "",
+    year: "",
+    section: "",
+    description: "",
+    join_link: "",
+    cover_image: null,
+  });
+  const [showCreateClassroomModal, setShowCreateClassroomModal] = useState(false);
+  const [classroomTheme, setClassroomTheme] = useState("sunset");
+  const classroomThemePresets = [
+    { key: "sunset", className: "linear-gradient(120deg, #fb7185, #f97316)" },
+    { key: "ocean", className: "linear-gradient(120deg, #0ea5e9, #2563eb)" },
+    { key: "mint", className: "linear-gradient(120deg, #10b981, #0ea5e9)" },
+    { key: "violet", className: "linear-gradient(120deg, #8b5cf6, #ec4899)" },
+    { key: "slate", className: "linear-gradient(120deg, #334155, #0f172a)" },
+  ];
+  const classroomFileInputRef = useRef(null);
+  const [facultyClassrooms, setFacultyClassrooms] = useState([]);
+  const [loadingFacultyClassrooms, setLoadingFacultyClassrooms] = useState(false);
+  const [submittingClassroom, setSubmittingClassroom] = useState(false);
+  const [selectedClassroom, setSelectedClassroom] = useState(null);
   const [facultyAssignments, setFacultyAssignments] = useState([]);
   const [loadingFacultyAssignments, setLoadingFacultyAssignments] = useState(false);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState(null);
@@ -186,6 +211,10 @@ function FacultyDashboard({ onLogout }) {
         department: prev.department || data.department || "",
       }));
       setAssignmentForm((prev) => ({
+        ...prev,
+        department: prev.department || data.department || "",
+      }));
+      setClassroomForm((prev) => ({
         ...prev,
         department: prev.department || data.department || "",
       }));
@@ -340,6 +369,19 @@ function FacultyDashboard({ onLogout }) {
     }
   };
 
+  const loadFacultyClassrooms = async () => {
+    setLoadingFacultyClassrooms(true);
+    setAssignmentError("");
+    try {
+      const data = await PreferenceService.getFacultyClassrooms();
+      setFacultyClassrooms(data || []);
+    } catch (err) {
+      setAssignmentError(err.response?.data?.message || "Failed to load classrooms.");
+    } finally {
+      setLoadingFacultyClassrooms(false);
+    }
+  };
+
   const loadAssignmentSubmissions = async (assignmentId) => {
     if (!assignmentId) {
       setAssignmentSubmissions([]);
@@ -422,6 +464,7 @@ function FacultyDashboard({ onLogout }) {
     }
     if (activePage === "assignments") {
       loadFacultyAssignments();
+      loadFacultyClassrooms();
     }
     if (activePage === "my-timetable" || activePage === "all-classes") loadFacultyTimetable();
   }, [activePage]);
@@ -468,6 +511,18 @@ function FacultyDashboard({ onLogout }) {
       loadAssignmentRoster(selectedAssignmentId);
     }
   }, [activePage, selectedAssignmentId, facultyAssignments]);
+
+  useEffect(() => {
+    if (!selectedClassroom?.id) return;
+    const freshRoom = facultyClassrooms.find((room) => room.id === selectedClassroom.id);
+    if (!freshRoom) {
+      setSelectedClassroom(null);
+      return;
+    }
+    if (freshRoom !== selectedClassroom) {
+      setSelectedClassroom(freshRoom);
+    }
+  }, [facultyClassrooms, selectedClassroom]);
 
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
@@ -639,6 +694,74 @@ function FacultyDashboard({ onLogout }) {
     setAssignmentForm((prev) => ({ ...prev, attachment: null }));
     if (assignmentFileInputRef.current) {
       assignmentFileInputRef.current.value = "";
+    }
+  };
+
+  const handleClassroomInput = (e) => {
+    const { name, value } = e.target;
+    setClassroomForm((prev) => ({ ...prev, [name]: value }));
+    setAssignmentMessage("");
+    setAssignmentError("");
+  };
+
+  const handleClassroomCover = (e) => {
+    const file = e.target.files?.[0] || null;
+    setClassroomForm((prev) => ({ ...prev, cover_image: file }));
+    setAssignmentError("");
+  };
+
+  const clearClassroomCover = () => {
+    setClassroomForm((prev) => ({ ...prev, cover_image: null }));
+    if (classroomFileInputRef.current) {
+      classroomFileInputRef.current.value = "";
+    }
+  };
+
+  const submitFacultyClassroom = async (e) => {
+    e.preventDefault();
+    setSubmittingClassroom(true);
+    setAssignmentMessage("");
+    setAssignmentError("");
+    try {
+      const safeJoinLink = (classroomForm.join_link || "").trim() || "https://classroom.google.com";
+      const formData = new FormData();
+      formData.append("title", classroomForm.title);
+      formData.append("subject", classroomForm.subject);
+      formData.append("semester", classroomForm.semester || "");
+      formData.append("department", classroomForm.department || "");
+      formData.append("year", classroomForm.year || "");
+      formData.append("section", classroomForm.section || "");
+      formData.append("description", classroomForm.description || "");
+      formData.append("join_link", safeJoinLink);
+      formData.append("theme", classroomTheme);
+      if (classroomForm.cover_image) {
+        formData.append("cover_image", classroomForm.cover_image);
+      }
+
+      const res = await PreferenceService.createFacultyClassroom(formData);
+      setAssignmentMessage(res.message || "Classroom created successfully.");
+      if (res?.data?.id) {
+        setFacultyClassrooms((prev) => [res.data, ...prev.filter((item) => item.id !== res.data.id)]);
+        setSelectedClassroom(res.data);
+      }
+      setClassroomForm((prev) => ({
+        ...prev,
+        title: "",
+        subject: "",
+        year: "",
+        section: "",
+        description: "",
+        join_link: "",
+        cover_image: null,
+      }));
+      setClassroomTheme("sunset");
+      setShowCreateClassroomModal(false);
+      if (classroomFileInputRef.current) classroomFileInputRef.current.value = "";
+      await loadFacultyClassrooms();
+    } catch (err) {
+      setAssignmentError(err.response?.data?.message || "Failed to create classroom.");
+    } finally {
+      setSubmittingClassroom(false);
     }
   };
 
@@ -1477,27 +1600,33 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "assignments") {
-      const selectedAssignment = facultyAssignments.find((row) => row.id === selectedAssignmentId);
-      const submissionsByStudentId = new Map(
-        assignmentSubmissions.map((row) => [row.student_id, row])
-      );
-      const rosterWithStatus = assignmentRoster.map((row) => {
-        const submission = submissionsByStudentId.get(row.student_id) || null;
-        return {
-          ...row,
-          submission,
-          submitted: Boolean(submission),
-        };
-      });
-      const submittedCount = rosterWithStatus.filter((row) => row.submitted).length;
-      const pendingCount = Math.max(rosterWithStatus.length - submittedCount, 0);
       return (
         <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-slate-800">Assignment Studio</h3>
-            <p className="text-sm text-slate-500 mt-1">
-              Publish professional assignments with rich instructions, links, files, and deadline reminders.
-            </p>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-7">
+            {!selectedClassroom && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-2xl font-semibold tracking-tight text-slate-900">Classrooms</h3>
+                  <p className="text-sm text-slate-500 mt-1">Manage classes, meeting links, and assignment communication.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={loadFacultyClassrooms}
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateClassroomModal(true)}
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+                  >
+                    + New class
+                  </button>
+                </div>
+              </div>
+            )}
 
             {assignmentMessage && (
               <div className="mt-4 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
@@ -1510,356 +1639,360 @@ function FacultyDashboard({ onLogout }) {
               </div>
             )}
 
-            <form onSubmit={submitFacultyAssignment} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input
-                name="title"
-                value={assignmentForm.title}
-                onChange={handleAssignmentInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Assignment title"
-                required
-              />
-              <input
-                name="subject"
-                value={assignmentForm.subject}
-                onChange={handleAssignmentInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Subject"
-                required
-              />
-              <input
-                name="semester"
-                value={assignmentForm.semester}
-                onChange={handleAssignmentInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Semester"
-              />
-              <input
-                name="department"
-                value={assignmentForm.department}
-                onChange={handleAssignmentInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Department"
-              />
-              <input
-                name="year"
-                type="number"
-                min="1"
-                max="8"
-                value={assignmentForm.year}
-                onChange={handleAssignmentInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Year (optional)"
-              />
-              <input
-                name="section"
-                value={assignmentForm.section}
-                onChange={handleAssignmentInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Section (optional)"
-              />
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Due Date & Time</label>
-                <input
-                  name="due_at"
-                  type="datetime-local"
-                  value={assignmentForm.due_at}
-                  onChange={handleAssignmentInput}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Reminder (days before)</label>
-                <input
-                  name="reminder_days_before"
-                  type="number"
-                  min="0"
-                  max="14"
-                  value={assignmentForm.reminder_days_before}
-                  onChange={handleAssignmentInput}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
-                />
-              </div>
-              <textarea
-                name="description"
-                rows={4}
-                value={assignmentForm.description}
-                onChange={handleAssignmentInput}
-                className="md:col-span-2 rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Assignment instructions, rubrics, and expected outcome."
-              />
-              <textarea
-                name="resource_links"
-                rows={3}
-                value={assignmentForm.resource_links}
-                onChange={handleAssignmentInput}
-                className="md:col-span-2 rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Resource links (one per line): video/audio/reference links"
-              />
-              <div className="md:col-span-2 flex flex-wrap items-center gap-3">
-                <input
-                  ref={assignmentFileInputRef}
-                  type="file"
-                  onChange={handleAssignmentAttachment}
-                  className="text-sm"
-                />
-                {assignmentForm.attachment && (
-                  <button
-                    type="button"
-                    onClick={clearAssignmentAttachment}
-                    className="rounded-lg border border-red-300 bg-red-50 text-red-700 px-3 py-2 text-sm hover:bg-red-100"
-                  >
-                    Cancel File
-                  </button>
-                )}
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    name="reminder_enabled"
-                    checked={assignmentForm.reminder_enabled}
-                    onChange={handleAssignmentInput}
-                  />
-                  Enable reminder
-                </label>
-                <button
-                  type="submit"
-                  disabled={submittingAssignment}
-                  className={`rounded-lg bg-blue-600 text-white hover:bg-blue-700 px-4 py-2.5 ${
-                    submittingAssignment ? "opacity-60 cursor-not-allowed" : ""
-                  }`}
+            {selectedClassroom ? (
+              <div className="mt-2">
+                <div
+                  className="overflow-hidden rounded-2xl border border-slate-200"
+                  style={{
+                    backgroundImage: selectedClassroom.cover_image_url
+                      ? `linear-gradient(120deg, rgba(15,23,42,0.72), rgba(15,23,42,0.38)), url('${selectedClassroom.cover_image_url}')`
+                      : "linear-gradient(120deg, #0f172a, #1e293b)",
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }}
                 >
-                  {submittingAssignment ? "Posting..." : "Post Assignment"}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <div className="xl:col-span-1 bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <h4 className="text-base font-semibold text-slate-800">Published Assignments</h4>
-                  <p className="text-xs text-slate-500 mt-1">Only assignments posted by you.</p>
-                  <p className="text-xs text-slate-500">Click any assignment to view submitted students.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={loadFacultyAssignments}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50"
-                >
-                  Refresh
-                </button>
-              </div>
-              {loadingFacultyAssignments ? (
-                <p className="text-sm text-slate-500 mt-3">Loading assignments...</p>
-              ) : facultyAssignments.length === 0 ? (
-                <p className="text-sm text-slate-500 mt-3">No assignments posted yet.</p>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  {facultyAssignments.map((row) => (
-                    <button
-                      key={row.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedAssignmentId(row.id);
-                        loadAssignmentSubmissions(row.id);
-                        loadAssignmentRoster(row.id);
-                      }}
-                      className={`w-full text-left rounded-lg border p-3 ${
-                        selectedAssignmentId === row.id
-                          ? "border-blue-300 bg-blue-50"
-                          : "border-slate-200 hover:border-slate-300"
-                      }`}
-                    >
-                      <p className="text-sm font-semibold text-slate-800">{row.title}</p>
-                      <p className="text-xs text-slate-500 mt-1">{row.subject}</p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Due {new Date(row.due_at).toLocaleString()}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {formatPostedRealtime(row.created_at)}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-1">
-                        Submissions: {row.submission_count || 0}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="xl:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              {!selectedAssignment ? (
-                <p className="text-sm text-slate-500">Select an assignment to view student submissions.</p>
-              ) : (
-                <>
-                  <div className="mb-4">
-                    <h4 className="text-base font-semibold text-slate-800">{selectedAssignment.title}</h4>
-                    <p className="text-sm text-slate-600 mt-1">{selectedAssignment.subject}</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Due {new Date(selectedAssignment.due_at).toLocaleString()}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {formatPostedRealtime(selectedAssignment.created_at)}
+                  <div className="px-6 py-6 text-white">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedClassroom(null)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-white/35 bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/15"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M15 18l-6-6 6-6" />
+                        </svg>
+                        Back to Classrooms
+                      </button>
+                      <a
+                        href={selectedClassroom.join_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                      >
+                        Open Live Class
+                      </a>
+                    </div>
+                    <p className="mt-5 text-3xl font-semibold tracking-tight">{selectedClassroom.title}</p>
+                    <p className="mt-1 text-sm text-slate-100">{selectedClassroom.subject}</p>
+                    <p className="mt-1 text-xs text-slate-200">
+                      {[selectedClassroom.department, selectedClassroom.year ? `Year ${selectedClassroom.year}` : null, selectedClassroom.section]
+                        .filter(Boolean)
+                        .join(" | ")}
                     </p>
                   </div>
+                </div>
 
-                  <h5 className="text-sm font-semibold text-slate-800 mb-3">Students who submitted</h5>
+                <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                    <h4 className="text-lg font-semibold text-slate-900">Classroom Overview</h4>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      {selectedClassroom.description || "No class description added yet."}
+                    </p>
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Section</p>
+                        <p className="font-medium text-slate-800">{selectedClassroom.section || "-"}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Semester</p>
+                        <p className="font-medium text-slate-800">{selectedClassroom.semester || "-"}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Department</p>
+                        <p className="font-medium text-slate-800">{selectedClassroom.department || "-"}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Year</p>
+                        <p className="font-medium text-slate-800">{selectedClassroom.year || "-"}</p>
+                      </div>
+                    </div>
+                  </div>
 
-                  <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex flex-wrap items-center gap-4 text-xs text-slate-700">
-                      <span>Enrolled: {rosterWithStatus.length}</span>
-                      <span>Submitted: {submittedCount}</span>
-                      <span>Pending: {pendingCount}</span>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <h4 className="text-base font-semibold text-slate-900">Quick Actions</h4>
+                    <div className="mt-3 space-y-2">
+                      <a
+                        href={selectedClassroom.join_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Open class meeting
+                        <span>{">"}</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(selectedClassroom.join_link || "")}
+                        className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Copy class link
+                        <span>#</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={loadFacultyClassrooms}
+                        className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        Refresh classroom data
+                        <span>R</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : loadingFacultyClassrooms ? (
+              <p className="text-sm text-slate-500 mt-4">Loading classrooms...</p>
+            ) : facultyClassrooms.length === 0 ? (
+              <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                <p className="text-sm font-medium text-slate-700">No classrooms yet</p>
+                <p className="mt-1 text-xs text-slate-500">Click `+ New class` to create your first classroom.</p>
+              </div>
+            ) : (
+              <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                {facultyClassrooms.map((room, index) => (
+                  <div
+                    key={room.id}
+                    className="cursor-pointer overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                    onClick={() => setSelectedClassroom(room)}
+                  >
+                    <div
+                      className="relative h-28 px-4 py-3 text-white"
+                      style={{
+                        backgroundImage: room.cover_image_url
+                          ? `linear-gradient(120deg, rgba(15,23,42,0.35), rgba(15,23,42,0.2)), url('${room.cover_image_url}')`
+                          : classroomThemePresets[index % classroomThemePresets.length].className,
+                        backgroundSize: "cover",
+                        backgroundPosition: "center",
+                      }}
+                    >
+                      <span className="inline-flex rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold">
+                        Active
+                      </span>
+                      <p className="mt-2 text-xl font-semibold leading-tight truncate">{room.title}</p>
+                      <p className="text-xs mt-1 opacity-95 truncate">{room.section || room.semester || "Classroom"}</p>
+                    </div>
+                    <div className="px-4 py-4 min-h-[88px]">
+                      <p className="truncate text-lg font-semibold text-slate-900">{room.subject}</p>
+                      <p className="mt-1 truncate text-xs text-slate-500">
+                        {[room.department, room.year ? `Year ${room.year}` : null].filter(Boolean).join(" | ") || "Academic classroom"}
+                      </p>
+                      <p className="mt-1 truncate text-xs text-slate-400">{room.faculty_name || facultyName}</p>
+                    </div>
+                    <div className="flex items-center justify-end gap-1.5 border-t border-slate-200 bg-slate-50/70 px-3 py-2.5">
+                      <a
+                        href={room.join_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded-lg p-2 text-slate-500 hover:bg-white hover:text-slate-700"
+                        title="Open class link"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <path d="M15 8a5 5 0 1 0-4.9 6" />
+                          <path d="M16 19h6" />
+                          <path d="M19 16v6" />
+                        </svg>
+                      </a>
+                      <a
+                        href={room.join_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded-lg p-2 text-slate-500 hover:bg-white hover:text-slate-700"
+                        title="Open classroom"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        </svg>
+                      </a>
+                      <div className="rounded-lg p-2 text-slate-400" title="Cloud classroom">
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <path d="M7 18a4 4 0 0 1-.4-8A5 5 0 0 1 16.3 8a3.8 3.8 0 0 1 .7 7.5" />
+                          <path d="M12 12v7" />
+                          <path d="m9.5 16.5 2.5 2.5 2.5-2.5" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {showCreateClassroomModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 p-4">
+              <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h4 className="text-lg font-semibold uppercase tracking-wide text-slate-900">Create a New Classroom</h4>
+                </div>
+
+                <form onSubmit={submitFacultyClassroom} className="max-h-[78vh] overflow-y-auto px-5 py-4">
+                  <div>
+                    <h5 className="text-base font-semibold text-slate-900">1. Class Details</h5>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Class name</span>
+                        <input
+                          name="title"
+                          value={classroomForm.title}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., Data Structures - CSE 3A"
+                          required
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Section</span>
+                        <input
+                          name="section"
+                          value={classroomForm.section}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., Section A (2022-2026)"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Subject</span>
+                        <input
+                          name="subject"
+                          value={classroomForm.subject}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., Computer Networks"
+                          required
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Semester</span>
+                        <input
+                          name="semester"
+                          value={classroomForm.semester}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., B.Tech Sem 5 (Odd 2026)"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Department</span>
+                        <input
+                          name="department"
+                          value={classroomForm.department}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., Computer Science & Engineering"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Year</span>
+                        <input
+                          name="year"
+                          type="number"
+                          min="1"
+                          max="8"
+                          value={classroomForm.year}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., 3"
+                        />
+                      </label>
+                      <label className="block md:col-span-2">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Class link</span>
+                        <input
+                          name="join_link"
+                          value={classroomForm.join_link}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., https://meet.google.com/abc-defg-hij"
+                        />
+                        <span className="mt-1 block text-xs text-slate-500">
+                          Add Google Meet / Zoom / Microsoft Teams classroom link. If left blank, default classroom link is used.
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 border-t border-slate-200 pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h5 className="text-base font-semibold text-slate-900">2. Class Appearance</h5>
+                      <button
+                        type="button"
+                        onClick={() => classroomFileInputRef.current?.click()}
+                        className="rounded-full border border-slate-300 px-3.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Select from Gallery
+                      </button>
                     </div>
 
-                    {loadingAssignmentRoster ? (
-                      <p className="text-sm text-slate-500 mt-3">Loading enrolled students...</p>
-                    ) : rosterWithStatus.length === 0 ? (
-                      <p className="text-sm text-slate-500 mt-3">
-                        No enrolled students found for this teacher + subject + semester.
-                      </p>
-                    ) : (
-                      <div className="mt-3 overflow-x-auto">
-                        <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden bg-white">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Student</th>
-                              <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Email</th>
-                              <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Status</th>
-                              <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Submitted At</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {rosterWithStatus.map((row) => (
-                              <tr key={row.id} className="border-t border-slate-200">
-                                <td className="px-3 py-2 text-sm text-slate-700">{row.student_name || "-"}</td>
-                                <td className="px-3 py-2 text-sm text-slate-700">{row.student_email || "-"}</td>
-                                <td className="px-3 py-2 text-sm">
-                                  {row.submitted ? (
-                                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-700 text-xs">
-                                      Submitted
-                                    </span>
-                                  ) : (
-                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700 text-xs">
-                                      Not Submitted
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-2 text-sm text-slate-700">
-                                  {row.submission?.submitted_at
-                                    ? new Date(row.submission.submitted_at).toLocaleString()
-                                    : "-"}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                    <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {classroomThemePresets.map((preset) => (
+                        <button
+                          type="button"
+                          key={preset.key}
+                          onClick={() => setClassroomTheme(preset.key)}
+                          className={`h-14 rounded-lg border transition ${classroomTheme === preset.key ? "border-indigo-500 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-300"}`}
+                          style={{ background: preset.className }}
+                        />
+                      ))}
+                    </div>
+
+                    <input
+                      ref={classroomFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      onChange={handleClassroomCover}
+                      className="hidden"
+                    />
+
+                    {classroomForm.cover_image && (
+                      <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="truncate pr-3 text-xs text-slate-700">{classroomForm.cover_image.name}</p>
+                        <button
+                          type="button"
+                          onClick={clearClassroomCover}
+                          className="rounded-md border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
+                        >
+                          Remove
+                        </button>
                       </div>
                     )}
                   </div>
 
-                  {loadingAssignmentSubmissions ? (
-                    <p className="text-sm text-slate-500">Loading submissions...</p>
-                  ) : assignmentSubmissions.length === 0 ? (
-                    <p className="text-sm text-slate-500">No student has submitted this assignment yet.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {assignmentSubmissions.map((submission) => {
-                        const draft = submissionReviewDrafts[submission.id] || {
-                          status: submission.status || "submitted",
-                          teacher_feedback: submission.teacher_feedback || "",
-                          grade: submission.grade || "",
-                        };
-                        return (
-                          <div key={submission.id} className="rounded-lg border border-slate-200 p-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm font-semibold text-slate-800">
-                                {submission.student_name} ({submission.roll_number || "N/A"})
-                              </p>
-                              <span className="text-xs rounded-full border border-slate-300 bg-slate-50 px-2.5 py-1 text-slate-700">
-                                {submission.status}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-500 mt-1">
-                              Submitted on {new Date(submission.submitted_at).toLocaleString()}
-                            </p>
-                            {submission.submission_text && (
-                              <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{submission.submission_text}</p>
-                            )}
-                            {submission.resource_links?.length > 0 && (
-                              <div className="mt-2 space-y-1">
-                                {submission.resource_links.map((link) => (
-                                  <a
-                                    key={link}
-                                    href={link}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="block text-xs text-blue-700 hover:underline break-all"
-                                  >
-                                    {link}
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-                            {submission.attachment_url && (
-                              <a
-                                href={submission.attachment_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-2 inline-flex text-xs text-blue-700 hover:underline"
-                              >
-                                Download file: {submission.attachment_name || "attachment"}
-                              </a>
-                            )}
+                  <div className="mt-5 border-t border-slate-200 pt-4">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Description (optional)</span>
+                      <textarea
+                        name="description"
+                        rows={3}
+                        value={classroomForm.description}
+                        onChange={handleClassroomInput}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                        placeholder="Brief class intro, rules, or plan."
+                      />
+                    </label>
+                  </div>
 
-                            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-                              <select
-                                value={draft.status}
-                                onChange={(e) => handleSubmissionReviewDraft(submission.id, "status", e.target.value)}
-                                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                              >
-                                <option value="submitted">Submitted</option>
-                                <option value="reviewed">Reviewed</option>
-                                <option value="needs_revision">Needs Revision</option>
-                              </select>
-                              <input
-                                value={draft.grade}
-                                onChange={(e) => handleSubmissionReviewDraft(submission.id, "grade", e.target.value)}
-                                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                                placeholder="Grade (optional)"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => saveSubmissionReview(submission.id)}
-                                className="rounded-lg bg-slate-800 text-white hover:bg-slate-900 px-3 py-2 text-sm"
-                              >
-                                Save Review
-                              </button>
-                              <textarea
-                                rows={2}
-                                value={draft.teacher_feedback}
-                                onChange={(e) =>
-                                  handleSubmissionReviewDraft(
-                                    submission.id,
-                                    "teacher_feedback",
-                                    e.target.value
-                                  )
-                                }
-                                className="md:col-span-3 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                                placeholder="Feedback for student..."
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              )}
+                  <div className="mt-5 flex items-center justify-end gap-2 border-t border-slate-200 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateClassroomModal(false)}
+                      className="rounded-lg px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingClassroom}
+                      className={`rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 ${
+                        submittingClassroom ? "cursor-not-allowed opacity-60" : ""
+                      }`}
+                    >
+                      {submittingClassroom ? "Creating..." : "Create"}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       );
     }
@@ -2604,3 +2737,4 @@ function FacultyDashboard({ onLogout }) {
 }
 
 export default FacultyDashboard;
+
