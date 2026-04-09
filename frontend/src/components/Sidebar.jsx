@@ -202,9 +202,7 @@ function Sidebar({
             <p className="text-xs text-slate-400 mt-1 tracking-wide">{portalLabel}</p>
           </div>
         ) : (
-          <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-slate-900 text-sky-300 font-semibold">
-            SC
-          </div>
+          <div className="h-10 w-10" />
         )}
       </div>
 

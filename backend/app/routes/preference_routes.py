@@ -18,6 +18,7 @@ from app.models import (
     ConflictRequest,
     CourseEnrollment,
     Classroom,
+    ClassroomAccessEmail,
     ClassroomMembership,
     Event,
     FacultyPreference,
@@ -71,6 +72,10 @@ def _normalize_day(value):
 def _parse_int(value):
     if value in (None, ""):
         return None
+
+
+def _normalize_email(value):
+    return (value or "").strip().lower()
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -604,6 +609,17 @@ def _is_classroom_targeted_to_student(classroom, student):
     if classroom.section and (student.section or "").strip().upper() != classroom.section.strip().upper():
         return False
     return True
+
+
+def _is_student_email_invited_for_classroom(classroom_id, email):
+    normalized = _normalize_email(email)
+    if not normalized:
+        return False
+    row = ClassroomAccessEmail.query.filter(
+        ClassroomAccessEmail.classroom_id == classroom_id,
+        ClassroomAccessEmail.student_email == normalized,
+    ).first()
+    return row is not None
 
 
 def _normalize_text_key(value):
@@ -2330,6 +2346,171 @@ def get_faculty_classrooms():
     return jsonify([_serialize_classroom(row) for row in rows]), 200
 
 
+@preference_bp.route("/api/faculty/classrooms/<int:classroom_id>", methods=["PATCH"])
+@jwt_required()
+def update_faculty_classroom(classroom_id):
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    row = Classroom.query.get(classroom_id)
+    if not row:
+        return jsonify({"message": "Classroom not found"}), 404
+    if row.faculty_id != user.id:
+        return jsonify({"message": "Forbidden"}), 403
+
+    data = request.get_json() or {}
+
+    if "title" in data:
+        title = (data.get("title") or "").strip()
+        if not title:
+            return jsonify({"message": "title is required"}), 400
+        if len(title) > 200:
+            return jsonify({"message": "title must be 200 characters or fewer"}), 400
+        row.title = title
+
+    if "subject" in data:
+        subject = (data.get("subject") or "").strip()
+        if not subject:
+            return jsonify({"message": "subject is required"}), 400
+        row.subject = subject
+
+    if "semester" in data:
+        row.semester = (data.get("semester") or "").strip() or None
+
+    if "department" in data:
+        row.department = (data.get("department") or "").strip() or None
+
+    if "section" in data:
+        row.section = (data.get("section") or "").strip() or None
+
+    if "description" in data:
+        row.description = (data.get("description") or "").strip() or None
+
+    if "join_link" in data:
+        join_link = (data.get("join_link") or "").strip()
+        if not join_link:
+            join_link = "https://classroom.google.com"
+        elif not (join_link.startswith("http://") or join_link.startswith("https://")):
+            return jsonify({"message": "join_link must start with http:// or https://"}), 400
+        row.join_link = join_link
+
+    if "year" in data:
+        year = _parse_int(data.get("year"))
+        if year is not None and (year < 1 or year > 8):
+            return jsonify({"message": "year must be between 1 and 8"}), 400
+        row.year = year
+
+    db.session.commit()
+    return jsonify({"message": "Classroom updated successfully.", "data": _serialize_classroom(row)}), 200
+
+
+@preference_bp.route("/api/faculty/classrooms/<int:classroom_id>/access-emails", methods=["GET"])
+@jwt_required()
+def get_faculty_classroom_access_emails(classroom_id):
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    classroom = Classroom.query.get(classroom_id)
+    if not classroom:
+        return jsonify({"message": "Classroom not found"}), 404
+    if classroom.faculty_id != user.id:
+        return jsonify({"message": "Forbidden"}), 403
+
+    rows = (
+        ClassroomAccessEmail.query
+        .filter(ClassroomAccessEmail.classroom_id == classroom_id)
+        .order_by(ClassroomAccessEmail.created_at.desc())
+        .all()
+    )
+    payload = [
+        {
+            "id": row.id,
+            "student_email": row.student_email,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+    return jsonify(payload), 200
+
+
+@preference_bp.route("/api/faculty/classrooms/<int:classroom_id>/access-emails", methods=["POST"])
+@jwt_required()
+def add_faculty_classroom_access_email(classroom_id):
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    classroom = Classroom.query.get(classroom_id)
+    if not classroom:
+        return jsonify({"message": "Classroom not found"}), 404
+    if classroom.faculty_id != user.id:
+        return jsonify({"message": "Forbidden"}), 403
+
+    data = request.get_json() or {}
+    email = _normalize_email(data.get("student_email"))
+    if not email:
+        return jsonify({"message": "student_email is required"}), 400
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return jsonify({"message": "Enter a valid student email"}), 400
+
+    student = User.query.filter(func.lower(User.email) == email).first()
+    if not student or student.role != "student":
+        return jsonify({"message": "No student account found with this email."}), 400
+
+    existing = ClassroomAccessEmail.query.filter(
+        ClassroomAccessEmail.classroom_id == classroom_id,
+        ClassroomAccessEmail.student_email == email,
+    ).first()
+    if existing:
+        return jsonify({
+            "message": "Email already added.",
+            "data": {
+                "id": existing.id,
+                "student_email": existing.student_email,
+                "created_at": existing.created_at.isoformat() if existing.created_at else None,
+            },
+        }), 200
+
+    row = ClassroomAccessEmail(
+        classroom_id=classroom_id,
+        student_email=email,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({
+        "message": "Student access email added.",
+        "data": {
+            "id": row.id,
+            "student_email": row.student_email,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        },
+    }), 201
+
+
+@preference_bp.route("/api/faculty/classrooms/<int:classroom_id>/access-emails/<int:access_email_id>", methods=["DELETE"])
+@jwt_required()
+def delete_faculty_classroom_access_email(classroom_id, access_email_id):
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    classroom = Classroom.query.get(classroom_id)
+    if not classroom:
+        return jsonify({"message": "Classroom not found"}), 404
+    if classroom.faculty_id != user.id:
+        return jsonify({"message": "Forbidden"}), 403
+
+    row = ClassroomAccessEmail.query.get(access_email_id)
+    if not row or row.classroom_id != classroom_id:
+        return jsonify({"message": "Access email not found"}), 404
+
+    db.session.delete(row)
+    db.session.commit()
+    return jsonify({"message": "Student access email removed."}), 200
+
+
 @preference_bp.route("/api/student/classrooms/invites", methods=["GET"])
 @jwt_required()
 def get_student_classroom_invites():
@@ -2340,6 +2521,13 @@ def get_student_classroom_invites():
     joined_ids = {
         row.classroom_id
         for row in ClassroomMembership.query.filter(ClassroomMembership.student_id == user.id).all()
+    }
+
+    invited_classroom_ids = {
+        row.classroom_id
+        for row in ClassroomAccessEmail.query.filter(
+            ClassroomAccessEmail.student_email == _normalize_email(user.email)
+        ).all()
     }
 
     rows = (
@@ -2353,7 +2541,9 @@ def get_student_classroom_invites():
     for row in rows:
         if row.id in joined_ids:
             continue
-        if not _is_classroom_targeted_to_student(row, user):
+        has_target_match = _is_classroom_targeted_to_student(row, user)
+        has_email_access = row.id in invited_classroom_ids
+        if not has_target_match and not has_email_access:
             continue
         payload = _serialize_classroom(row)
         payload["notification_message"] = (
@@ -2399,8 +2589,10 @@ def join_student_classroom(classroom_id):
     classroom = Classroom.query.get(classroom_id)
     if not classroom or not classroom.is_active:
         return jsonify({"message": "Classroom not found"}), 404
-    if not _is_classroom_targeted_to_student(classroom, user):
-        return jsonify({"message": "This classroom is not targeted for your class."}), 403
+    has_target_match = _is_classroom_targeted_to_student(classroom, user)
+    has_email_access = _is_student_email_invited_for_classroom(classroom.id, user.email)
+    if not has_target_match and not has_email_access:
+        return jsonify({"message": "This classroom is not targeted for your class or invited email."}), 403
 
     existing = ClassroomMembership.query.filter(
         ClassroomMembership.classroom_id == classroom_id,

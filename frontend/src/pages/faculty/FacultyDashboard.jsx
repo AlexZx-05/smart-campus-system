@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DashboardLayout from "../../layouts/DashboardLayout";
 import PreferenceService from "../../services/PreferenceService";
 import DashboardService from "../../services/DashboardService";
@@ -48,6 +48,7 @@ function FacultyDashboard({ onLogout }) {
   const [preferenceError, setPreferenceError] = useState("");
   const [submittingPreference, setSubmittingPreference] = useState(false);
   const [myPreferences, setMyPreferences] = useState([]);
+  const [expandedPreferenceSubject, setExpandedPreferenceSubject] = useState(null);
   const [loadingMyPreferences, setLoadingMyPreferences] = useState(false);
   const [facultyTimetable, setFacultyTimetable] = useState([]);
   const [todaySchedule, setTodaySchedule] = useState([]);
@@ -152,6 +153,40 @@ function FacultyDashboard({ onLogout }) {
   const [loadingFacultyClassrooms, setLoadingFacultyClassrooms] = useState(false);
   const [submittingClassroom, setSubmittingClassroom] = useState(false);
   const [selectedClassroom, setSelectedClassroom] = useState(null);
+  const [isEditingSelectedClassroom, setIsEditingSelectedClassroom] = useState(false);
+  const [savingSelectedClassroom, setSavingSelectedClassroom] = useState(false);
+  const [classroomAccessEmails, setClassroomAccessEmails] = useState([]);
+  const [loadingClassroomAccessEmails, setLoadingClassroomAccessEmails] = useState(false);
+  const [newClassroomAccessEmail, setNewClassroomAccessEmail] = useState("");
+  const [savingClassroomAccessEmail, setSavingClassroomAccessEmail] = useState(false);
+  const [removingClassroomAccessEmailId, setRemovingClassroomAccessEmailId] = useState(null);
+  const [selectedClassroomTab, setSelectedClassroomTab] = useState("stream");
+  const [classroomAnnouncementDraft, setClassroomAnnouncementDraft] = useState("");
+  const [classroomAnnouncementsById, setClassroomAnnouncementsById] = useState({});
+  const [classroomPeople, setClassroomPeople] = useState([]);
+  const [loadingClassroomPeople, setLoadingClassroomPeople] = useState(false);
+  const [showClassworkComposer, setShowClassworkComposer] = useState(false);
+  const [publishingClasswork, setPublishingClasswork] = useState(false);
+  const [showClassworkCreateMenu, setShowClassworkCreateMenu] = useState(false);
+  const [classworkCreateType, setClassworkCreateType] = useState("assignment");
+  const [classworkDraft, setClassworkDraft] = useState({
+    title: "",
+    description: "",
+    due_at: "",
+    points: "100",
+    topic: "",
+  });
+  const [showPeopleInviteForm, setShowPeopleInviteForm] = useState(false);
+  const [selectedClassroomForm, setSelectedClassroomForm] = useState({
+    title: "",
+    subject: "",
+    semester: "",
+    department: "",
+    year: "",
+    section: "",
+    description: "",
+    join_link: "",
+  });
   const [facultyAssignments, setFacultyAssignments] = useState([]);
   const [loadingFacultyAssignments, setLoadingFacultyAssignments] = useState(false);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState(null);
@@ -162,6 +197,9 @@ function FacultyDashboard({ onLogout }) {
   const [submissionReviewDrafts, setSubmissionReviewDrafts] = useState({});
   const [assignmentNowMs, setAssignmentNowMs] = useState(Date.now());
   const composeTeacherMessageRef = useRef(null);
+  const classroomTabContentRef = useRef(null);
+  const classroomTabsRef = useRef(null);
+  const classworkCreateMenuRef = useRef(null);
 
   const sidebarItems = [
     { key: "dashboard", label: "Dashboard" },
@@ -524,6 +562,66 @@ function FacultyDashboard({ onLogout }) {
     }
   }, [facultyClassrooms, selectedClassroom]);
 
+  useEffect(() => {
+    if (!selectedClassroom?.id) {
+      setClassroomAccessEmails([]);
+      setNewClassroomAccessEmail("");
+      setSelectedClassroomTab("stream");
+      setClassroomPeople([]);
+      return;
+    }
+    loadClassroomAccessEmails(selectedClassroom.id);
+  }, [selectedClassroom?.id]);
+
+  useEffect(() => {
+    if (!selectedClassroom?.id || selectedClassroomTab !== "people") return;
+    loadSelectedClassroomPeople(selectedClassroom);
+  }, [selectedClassroom?.id, selectedClassroomTab]);
+
+  useEffect(() => {
+    if (selectedClassroomTab !== "classwork") {
+      setShowClassworkCreateMenu(false);
+      setShowClassworkComposer(false);
+    }
+  }, [selectedClassroomTab]);
+
+  useEffect(() => {
+    const onPointerDown = (event) => {
+      if (!showClassworkCreateMenu) return;
+      if (classworkCreateMenuRef.current?.contains(event.target)) return;
+      setShowClassworkCreateMenu(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [showClassworkCreateMenu]);
+
+  useEffect(() => {
+    if (!selectedClassroom) {
+      setIsEditingSelectedClassroom(false);
+      setSelectedClassroomForm({
+        title: "",
+        subject: "",
+        semester: "",
+        department: "",
+        year: "",
+        section: "",
+        description: "",
+        join_link: "",
+      });
+      return;
+    }
+    setSelectedClassroomForm({
+      title: selectedClassroom.title || "",
+      subject: selectedClassroom.subject || "",
+      semester: selectedClassroom.semester || "",
+      department: selectedClassroom.department || "",
+      year: selectedClassroom.year?.toString() || "",
+      section: selectedClassroom.section || "",
+      description: selectedClassroom.description || "",
+      join_link: selectedClassroom.join_link || "",
+    });
+  }, [selectedClassroom]);
+
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
     setProfile((prev) => ({ ...prev, [name]: value }));
@@ -743,6 +841,7 @@ function FacultyDashboard({ onLogout }) {
       if (res?.data?.id) {
         setFacultyClassrooms((prev) => [res.data, ...prev.filter((item) => item.id !== res.data.id)]);
         setSelectedClassroom(res.data);
+        setSelectedClassroomTab("stream");
       }
       setClassroomForm((prev) => ({
         ...prev,
@@ -970,6 +1069,352 @@ function FacultyDashboard({ onLogout }) {
     }
   };
 
+  const preferenceStatusClasses = {
+    approved: "bg-green-50 text-green-700 border-green-200",
+    rejected: "bg-red-50 text-red-700 border-red-200",
+    pending: "bg-amber-50 text-amber-700 border-amber-200",
+  };
+
+  const subjectPreferenceGroups = useMemo(() => {
+    const groups = new Map();
+    myPreferences.forEach((pref) => {
+      const displaySubject = (pref.subject || "Untitled Subject").trim() || "Untitled Subject";
+      const key = displaySubject.toLowerCase();
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          subject: displaySubject,
+          entries: [],
+          latestAtMs: 0,
+          student_count: pref.student_count || "",
+          department: pref.department || "",
+          year: pref.year || "",
+          section: pref.section || "",
+        });
+      }
+      const group = groups.get(key);
+      const entryTimeMs = new Date(pref.created_at || pref.updated_at || 0).getTime();
+      group.entries.push(pref);
+      if (entryTimeMs > group.latestAtMs) group.latestAtMs = entryTimeMs;
+      if (!group.student_count && pref.student_count) group.student_count = pref.student_count;
+      if (!group.department && pref.department) group.department = pref.department;
+      if (!group.year && pref.year) group.year = pref.year;
+      if (!group.section && pref.section) group.section = pref.section;
+    });
+
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        entries: group.entries.sort((a, b) => {
+          const aTime = new Date(a.created_at || a.updated_at || 0).getTime();
+          const bTime = new Date(b.created_at || b.updated_at || 0).getTime();
+          return bTime - aTime;
+        }),
+      }))
+      .sort((a, b) => b.latestAtMs - a.latestAtMs);
+  }, [myPreferences]);
+
+  useEffect(() => {
+    if (subjectPreferenceGroups.length === 0) {
+      setExpandedPreferenceSubject(null);
+      return;
+    }
+    if (expandedPreferenceSubject && !subjectPreferenceGroups.some((group) => group.key === expandedPreferenceSubject)) {
+      setExpandedPreferenceSubject(null);
+    }
+  }, [subjectPreferenceGroups, expandedPreferenceSubject]);
+
+  const getClassroomCoverBackground = (room, fallbackIndex = 0, isHero = false) => {
+    if (!room) return "linear-gradient(120deg, #0f172a, #1e293b)";
+
+    if (room.cover_image_url) {
+      const overlay = isHero
+        ? "linear-gradient(120deg, rgba(15,23,42,0.46), rgba(15,23,42,0.24))"
+        : "linear-gradient(120deg, rgba(15,23,42,0.35), rgba(15,23,42,0.2))";
+      return `${overlay}, url('${room.cover_image_url}')`;
+    }
+
+    const presetFromTheme = classroomThemePresets.find((preset) => preset.key === room.theme)?.className;
+    return presetFromTheme || classroomThemePresets[fallbackIndex % classroomThemePresets.length].className;
+  };
+
+  const selectedClassroomMetaText = useMemo(() => {
+    if (!selectedClassroom) return "";
+    const department = isEditingSelectedClassroom ? selectedClassroomForm.department : selectedClassroom.department;
+    const year = isEditingSelectedClassroom ? selectedClassroomForm.year : selectedClassroom.year;
+    const section = isEditingSelectedClassroom ? selectedClassroomForm.section : selectedClassroom.section;
+    return [department, year ? `Year ${year}` : null, section].filter(Boolean).join(" | ");
+  }, [
+    selectedClassroom,
+    isEditingSelectedClassroom,
+    selectedClassroomForm.department,
+    selectedClassroomForm.year,
+    selectedClassroomForm.section,
+  ]);
+
+  const selectedClassroomAssignments = useMemo(() => {
+    if (!selectedClassroom) return [];
+    const norm = (v) => (v || "").toString().trim().toLowerCase();
+    return (facultyAssignments || []).filter((row) => {
+      if (norm(row.subject) !== norm(selectedClassroom.subject)) return false;
+      if (selectedClassroom.semester && norm(row.semester) !== norm(selectedClassroom.semester)) return false;
+      return true;
+    });
+  }, [selectedClassroom, facultyAssignments]);
+
+  const selectedClassroomAnnouncements = useMemo(() => {
+    if (!selectedClassroom?.id) return [];
+    return classroomAnnouncementsById[selectedClassroom.id] || [];
+  }, [selectedClassroom?.id, classroomAnnouncementsById]);
+
+  const handleSelectedClassroomField = (e) => {
+    const { name, value } = e.target;
+    setSelectedClassroomForm((prev) => ({ ...prev, [name]: value }));
+    setAssignmentMessage("");
+    setAssignmentError("");
+  };
+
+  const startEditingSelectedClassroom = () => {
+    if (!selectedClassroom) return;
+    setSelectedClassroomForm({
+      title: selectedClassroom.title || "",
+      subject: selectedClassroom.subject || "",
+      semester: selectedClassroom.semester || "",
+      department: selectedClassroom.department || "",
+      year: selectedClassroom.year?.toString() || "",
+      section: selectedClassroom.section || "",
+      description: selectedClassroom.description || "",
+      join_link: selectedClassroom.join_link || "",
+    });
+    setIsEditingSelectedClassroom(true);
+  };
+
+  const cancelEditingSelectedClassroom = () => {
+    setIsEditingSelectedClassroom(false);
+    setAssignmentError("");
+  };
+
+  const saveSelectedClassroomDetails = async () => {
+    if (!selectedClassroom?.id) return;
+    setSavingSelectedClassroom(true);
+    setAssignmentMessage("");
+    setAssignmentError("");
+    try {
+      const payload = {
+        title: selectedClassroomForm.title,
+        subject: selectedClassroomForm.subject,
+        semester: selectedClassroomForm.semester || "",
+        department: selectedClassroomForm.department || "",
+        year: selectedClassroomForm.year || "",
+        section: selectedClassroomForm.section || "",
+        description: selectedClassroomForm.description || "",
+        join_link: selectedClassroomForm.join_link || "",
+      };
+      const res = await PreferenceService.updateFacultyClassroom(selectedClassroom.id, payload);
+      const updated = res?.data || null;
+      if (updated) {
+        setFacultyClassrooms((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        setSelectedClassroom(updated);
+      }
+      setAssignmentMessage(res?.message || "Classroom details updated.");
+      setIsEditingSelectedClassroom(false);
+    } catch (err) {
+      setAssignmentError(err.response?.data?.message || "Failed to update classroom details.");
+    } finally {
+      setSavingSelectedClassroom(false);
+    }
+  };
+
+  const loadClassroomAccessEmails = async (classroomId) => {
+    if (!classroomId) {
+      setClassroomAccessEmails([]);
+      return;
+    }
+    setLoadingClassroomAccessEmails(true);
+    setAssignmentError("");
+    try {
+      const data = await PreferenceService.getFacultyClassroomAccessEmails(classroomId);
+      setClassroomAccessEmails(data || []);
+    } catch (err) {
+      setClassroomAccessEmails([]);
+      setAssignmentError(err.response?.data?.message || "Failed to load classroom access emails.");
+    } finally {
+      setLoadingClassroomAccessEmails(false);
+    }
+  };
+
+  const loadSelectedClassroomPeople = async (classroom) => {
+    if (!classroom?.subject) {
+      setClassroomPeople([]);
+      return;
+    }
+    setLoadingClassroomPeople(true);
+    setAssignmentError("");
+    try {
+      const data = await PreferenceService.getFacultyCourseEnrollments({
+        subject: classroom.subject,
+        semester: classroom.semester || undefined,
+      });
+      setClassroomPeople(data || []);
+    } catch (err) {
+      setClassroomPeople([]);
+      setAssignmentError(err.response?.data?.message || "Failed to load classroom students.");
+    } finally {
+      setLoadingClassroomPeople(false);
+    }
+  };
+
+  const addStudentAccessEmail = async (e) => {
+    e.preventDefault();
+    if (!selectedClassroom?.id) return;
+    const email = (newClassroomAccessEmail || "").trim().toLowerCase();
+    if (!email) {
+      setAssignmentError("Enter a student email.");
+      return;
+    }
+    setSavingClassroomAccessEmail(true);
+    setAssignmentMessage("");
+    setAssignmentError("");
+    try {
+      const res = await PreferenceService.addFacultyClassroomAccessEmail(selectedClassroom.id, email);
+      const added = res?.data;
+      if (added) {
+        setClassroomAccessEmails((prev) => {
+          const exists = prev.some((row) => row.id === added.id || row.student_email === added.student_email);
+          if (exists) return prev;
+          return [added, ...prev];
+        });
+      } else {
+        await loadClassroomAccessEmails(selectedClassroom.id);
+      }
+      setNewClassroomAccessEmail("");
+      setAssignmentMessage(res?.message || "Student access email added.");
+    } catch (err) {
+      setAssignmentError(err.response?.data?.message || "Failed to add student access email.");
+    } finally {
+      setSavingClassroomAccessEmail(false);
+    }
+  };
+
+  const removeStudentAccessEmail = async (accessEmailId) => {
+    if (!selectedClassroom?.id || !accessEmailId) return;
+    setRemovingClassroomAccessEmailId(accessEmailId);
+    setAssignmentMessage("");
+    setAssignmentError("");
+    try {
+      const res = await PreferenceService.removeFacultyClassroomAccessEmail(selectedClassroom.id, accessEmailId);
+      setClassroomAccessEmails((prev) => prev.filter((row) => row.id !== accessEmailId));
+      setAssignmentMessage(res?.message || "Student access email removed.");
+    } catch (err) {
+      setAssignmentError(err.response?.data?.message || "Failed to remove student access email.");
+    } finally {
+      setRemovingClassroomAccessEmailId(null);
+    }
+  };
+
+  const classworkCreateItems = [
+    { key: "assignment", label: "Assignment" },
+    { key: "quiz_assignment", label: "Quiz assignment" },
+    { key: "question", label: "Question" },
+    { key: "material", label: "Material" },
+    { key: "reuse_post", label: "Reuse post" },
+    { key: "topic", label: "Topic" },
+  ];
+
+  const classworkTypeLabelMap = {
+    assignment: "Assignment",
+    quiz_assignment: "Quiz assignment",
+    question: "Question",
+    material: "Material",
+    reuse_post: "Reuse post",
+    topic: "Topic",
+  };
+
+  const openClassworkComposer = (typeKey) => {
+    setClassworkCreateType(typeKey);
+    setShowClassworkComposer(true);
+    setShowClassworkCreateMenu(false);
+    setClassworkDraft({ title: "", description: "", due_at: "", points: "100", topic: "" });
+    setAssignmentMessage("");
+    setAssignmentError("");
+  };
+
+  const publishClassworkFromClassroom = async (e) => {
+    e.preventDefault();
+    if (!selectedClassroom) return;
+    if (!classworkDraft.title.trim()) {
+      setAssignmentError("Title is required.");
+      return;
+    }
+    if (!classworkDraft.due_at) {
+      setAssignmentError("Due date and time is required.");
+      return;
+    }
+
+    setPublishingClasswork(true);
+    setAssignmentMessage("");
+    setAssignmentError("");
+    try {
+      const prefix = classworkTypeLabelMap[classworkCreateType] || "Classwork";
+      const title = classworkCreateType === "assignment" ? classworkDraft.title.trim() : `[${prefix}] ${classworkDraft.title.trim()}`;
+      const formData = new FormData();
+      formData.append("title", title);
+      formData.append("subject", selectedClassroom.subject || "");
+      formData.append("description", classworkDraft.description || "");
+      formData.append("semester", selectedClassroom.semester || "");
+      formData.append("department", selectedClassroom.department || "");
+      formData.append("year", selectedClassroom.year || "");
+      formData.append("section", selectedClassroom.section || "");
+      formData.append("due_at", new Date(classworkDraft.due_at).toISOString());
+      formData.append("reminder_enabled", "true");
+      formData.append("reminder_days_before", "1");
+      formData.append("resource_links", "");
+      const res = await PreferenceService.createFacultyAssignment(formData);
+      setAssignmentMessage(res?.message || `${prefix} published successfully.`);
+      setShowClassworkComposer(false);
+      setClassworkDraft({ title: "", description: "", due_at: "", points: "100", topic: "" });
+      await loadFacultyAssignments();
+    } catch (err) {
+      setAssignmentError(err.response?.data?.message || "Failed to publish classwork.");
+    } finally {
+      setPublishingClasswork(false);
+    }
+  };
+
+  const postClassroomAnnouncement = (e) => {
+    e.preventDefault();
+    if (!selectedClassroom?.id) return;
+    const text = (classroomAnnouncementDraft || "").trim();
+    if (!text) return;
+    const newItem = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      body: text,
+      created_at: new Date().toISOString(),
+    };
+    setClassroomAnnouncementsById((prev) => ({
+      ...prev,
+      [selectedClassroom.id]: [newItem, ...(prev[selectedClassroom.id] || [])],
+    }));
+    setClassroomAnnouncementDraft("");
+    setAssignmentMessage("Announcement posted in stream.");
+    setAssignmentError("");
+  };
+
+  const handleClassroomTabChange = (tabKey) => {
+    setSelectedClassroomTab(tabKey);
+    setTimeout(() => {
+      const target = classroomTabsRef.current || classroomTabContentRef.current;
+      if (!target) return;
+      const scrollContainer = target.closest("main");
+      if (scrollContainer) {
+        const top = Math.max(0, target.offsetTop - 12);
+        scrollContainer.scrollTo({ top, behavior: "smooth" });
+      } else {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 40);
+  };
+
   const renderContent = () => {
     if (activePage === "dashboard") {
       const toMinutes = (timeText) => {
@@ -1178,7 +1623,7 @@ function FacultyDashboard({ onLogout }) {
     if (activePage === "my-timetable") {
       return (
         <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-slate-800">My Timetable</h3>
@@ -1451,39 +1896,79 @@ function FacultyDashboard({ onLogout }) {
             {preferenceMessage && <div className="mt-4 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">{preferenceMessage}</div>}
             {preferenceError && <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{preferenceError}</div>}
 
-            <form className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4" onSubmit={handlePreferenceSubmit}>
+            <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={handlePreferenceSubmit}>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Subject</label>
-                <input name="subject" value={preferenceForm.subject} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Subject</label>
+                <input
+                  name="subject"
+                  value={preferenceForm.subject}
+                  onChange={handlePreferenceChange}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  required
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Number of Students</label>
-                <input type="number" min="1" name="student_count" value={preferenceForm.student_count} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Number of Students</label>
+                <input
+                  type="number"
+                  min="1"
+                  name="student_count"
+                  value={preferenceForm.student_count}
+                  onChange={handlePreferenceChange}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  required
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Semester</label>
-                <input name="semester" value={preferenceForm.semester} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Semester</label>
+                <input
+                  name="semester"
+                  value={preferenceForm.semester}
+                  onChange={handlePreferenceChange}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  required
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
-                <input name="department" value={preferenceForm.department} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Department</label>
+                <input
+                  name="department"
+                  value={preferenceForm.department}
+                  onChange={handlePreferenceChange}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  required
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Year</label>
-                <input type="number" min="1" max="8" name="year" value={preferenceForm.year} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" />
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Year</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="8"
+                  name="year"
+                  value={preferenceForm.year}
+                  onChange={handlePreferenceChange}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Section</label>
-                <input name="section" value={preferenceForm.section} onChange={handlePreferenceChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" placeholder="A" />
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Section</label>
+                <input
+                  name="section"
+                  value={preferenceForm.section}
+                  onChange={handlePreferenceChange}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="A"
+                />
               </div>
-              <div className="md:col-span-2 rounded-lg border border-slate-200 p-4">
+              <div className="md:col-span-2 rounded-md border border-slate-200 p-3.5">
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-slate-700">Weekly Slots</label>
                   <button
                     type="button"
                     onClick={addPreferenceSlot}
                     disabled={preferenceForm.slots.length >= 4}
-                    className={`px-3 py-1.5 rounded-md text-xs ${
+                    className={`rounded-md px-3 py-1.5 text-xs ${
                       preferenceForm.slots.length >= 4
                         ? "bg-slate-200 text-slate-500 cursor-not-allowed"
                         : "bg-slate-900 text-white hover:bg-slate-800"
@@ -1495,15 +1980,15 @@ function FacultyDashboard({ onLogout }) {
                 <p className="text-xs text-slate-500 mt-1">
                   {preferenceForm.slots.length}/4 slots added for this subject.
                 </p>
-                <div className="mt-3 space-y-3">
+                <div className="mt-2.5 space-y-2.5">
                   {preferenceForm.slots.map((slot, idx) => (
-                    <div key={`slot-${idx}`} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-                      <div>
+                    <div key={`slot-${idx}`} className="grid grid-cols-1 items-end gap-2.5 md:grid-cols-12">
+                      <div className="md:col-span-4">
                         <label className="block text-xs font-medium text-slate-600 mb-1">Day</label>
                         <select
                           value={slot.day}
                           onChange={(e) => handlePreferenceSlotChange(idx, "day", e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                         >
                           {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
                             <option key={day} value={day}>
@@ -1512,30 +1997,30 @@ function FacultyDashboard({ onLogout }) {
                           ))}
                         </select>
                       </div>
-                      <div>
+                      <div className="md:col-span-3">
                         <label className="block text-xs font-medium text-slate-600 mb-1">Start Time</label>
                         <input
                           type="time"
                           value={slot.start_time}
                           onChange={(e) => handlePreferenceSlotChange(idx, "start_time", e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                         />
                       </div>
-                      <div>
+                      <div className="md:col-span-3">
                         <label className="block text-xs font-medium text-slate-600 mb-1">End Time</label>
                         <input
                           type="time"
                           value={slot.end_time}
                           onChange={(e) => handlePreferenceSlotChange(idx, "end_time", e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5"
+                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                         />
                       </div>
-                      <div>
+                      <div className="md:col-span-2">
                         <button
                           type="button"
                           onClick={() => removePreferenceSlot(idx)}
                           disabled={preferenceForm.slots.length === 1}
-                          className={`w-full px-3 py-2.5 rounded-lg text-sm ${
+                          className={`w-full rounded-md px-3 py-2 text-sm ${
                             preferenceForm.slots.length === 1
                               ? "bg-slate-200 text-slate-500 cursor-not-allowed"
                               : "bg-red-50 text-red-700 hover:bg-red-100"
@@ -1549,11 +2034,24 @@ function FacultyDashboard({ onLogout }) {
                 </div>
               </div>
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Details</label>
-                <textarea name="details" value={preferenceForm.details} onChange={handlePreferenceChange} rows={3} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" />
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Details</label>
+                <textarea
+                  name="details"
+                  value={preferenceForm.details}
+                  onChange={handlePreferenceChange}
+                  rows={2}
+                  placeholder="Optional notes for admin (special requirements, constraints, etc.)"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
               </div>
-              <div className="md:col-span-2">
-                <button type="submit" disabled={submittingPreference} className={`px-4 py-2.5 rounded-lg text-white bg-blue-600 hover:bg-blue-700 ${submittingPreference ? "opacity-60 cursor-not-allowed" : ""}`}>
+              <div className="md:col-span-2 flex items-center justify-end border-t border-slate-200 pt-3">
+                <button
+                  type="submit"
+                  disabled={submittingPreference}
+                  className={`rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 ${
+                    submittingPreference ? "cursor-not-allowed opacity-60" : ""
+                  }`}
+                >
                   {submittingPreference ? "Submitting..." : "Submit Preference"}
                 </button>
               </div>
@@ -1567,31 +2065,78 @@ function FacultyDashboard({ onLogout }) {
             ) : myPreferences.length === 0 ? (
               <p className="text-sm text-slate-500 mt-3">No preferences submitted yet.</p>
             ) : (
-              <div className="mt-4 space-y-3">
-                {myPreferences.map((pref) => (
-                  <div key={pref.id} className="rounded-lg border border-slate-200 p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-slate-800">
-                        {pref.day} | {pref.subject} | {pref.start_time} - {pref.end_time}
-                      </p>
-                      <span
-                        className={`text-xs px-2 py-1 rounded-full border ${
-                          pref.status === "approved"
-                            ? "bg-green-50 text-green-700 border-green-200"
-                            : pref.status === "rejected"
-                              ? "bg-red-50 text-red-700 border-red-200"
-                              : "bg-amber-50 text-amber-700 border-amber-200"
-                        }`}
+              <div className="mt-4 space-y-2.5">
+                {subjectPreferenceGroups.map((group) => {
+                  const isExpanded = expandedPreferenceSubject === group.key;
+                  const latestStatus = group.entries[0]?.status || "pending";
+                  return (
+                    <div key={group.key} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedPreferenceSubject((prev) => (prev === group.key ? null : group.key))}
+                        aria-expanded={isExpanded}
+                        aria-controls={`pref-group-${group.key}`}
+                        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
                       >
-                        {pref.status}
-                      </span>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">{group.subject}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {group.entries.length} preferred slot{group.entries.length > 1 ? "s" : ""} submitted
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded-full border px-2.5 py-1 text-xs ${
+                              preferenceStatusClasses[latestStatus] || "bg-slate-100 text-slate-700 border-slate-300"
+                            }`}
+                          >
+                            {latestStatus}
+                          </span>
+                          <span
+                            className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition-transform duration-200 ${
+                              isExpanded ? "rotate-180" : ""
+                            }`}
+                          >
+                            <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="m5 8 5 5 5-5" />
+                            </svg>
+                          </span>
+                        </div>
+                      </button>
+
+                      {isExpanded && (
+                        <div id={`pref-group-${group.key}`} className="border-t border-slate-200 bg-slate-50 px-4 py-3">
+                          <p className="text-xs text-slate-600">
+                            Class: {group.department || "-"} / {group.year || "-"} / {group.section || "-"} | Students:{" "}
+                            {group.student_count || "-"}
+                          </p>
+                          <div className="mt-2.5 max-h-56 space-y-2 overflow-y-auto pr-1">
+                            {group.entries.map((pref) => (
+                              <div key={pref.id} className="rounded-md border border-slate-200 bg-white px-3 py-2.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-sm font-medium text-slate-800">
+                                    {pref.day} | {pref.start_time} - {pref.end_time}
+                                  </p>
+                                  <span
+                                    className={`rounded-full border px-2 py-0.5 text-xs ${
+                                      preferenceStatusClasses[pref.status] ||
+                                      "bg-slate-100 text-slate-700 border-slate-300"
+                                    }`}
+                                  >
+                                    {pref.status}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  Submitted: {pref.created_at ? new Date(pref.created_at).toLocaleString() : "-"}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">Students: {pref.student_count || "-"}</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Class: {pref.department || "-"} / {pref.year || "-"} / {pref.section || "-"}
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1644,9 +2189,14 @@ function FacultyDashboard({ onLogout }) {
                 <div
                   className="overflow-hidden rounded-2xl border border-slate-200"
                   style={{
-                    backgroundImage: selectedClassroom.cover_image_url
-                      ? `linear-gradient(120deg, rgba(15,23,42,0.72), rgba(15,23,42,0.38)), url('${selectedClassroom.cover_image_url}')`
-                      : "linear-gradient(120deg, #0f172a, #1e293b)",
+                    backgroundImage: getClassroomCoverBackground(
+                      selectedClassroom,
+                      Math.max(
+                        0,
+                        facultyClassrooms.findIndex((room) => room.id === selectedClassroom.id)
+                      ),
+                      true
+                    ),
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                   }}
@@ -1663,49 +2213,196 @@ function FacultyDashboard({ onLogout }) {
                         </svg>
                         Back to Classrooms
                       </button>
-                      <a
-                        href={selectedClassroom.join_link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
-                      >
-                        Open Live Class
-                      </a>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={isEditingSelectedClassroom ? cancelEditingSelectedClassroom : startEditingSelectedClassroom}
+                          className="rounded-xl border border-white/35 bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                        >
+                          {isEditingSelectedClassroom ? "Cancel Edit" : "Edit Details"}
+                        </button>
+                        <a
+                          href={selectedClassroom.join_link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                        >
+                          Open Live Class
+                        </a>
+                      </div>
                     </div>
-                    <p className="mt-5 text-3xl font-semibold tracking-tight">{selectedClassroom.title}</p>
-                    <p className="mt-1 text-sm text-slate-100">{selectedClassroom.subject}</p>
-                    <p className="mt-1 text-xs text-slate-200">
-                      {[selectedClassroom.department, selectedClassroom.year ? `Year ${selectedClassroom.year}` : null, selectedClassroom.section]
-                        .filter(Boolean)
-                        .join(" | ")}
+                    <p className="mt-5 text-3xl font-semibold tracking-tight">
+                      {isEditingSelectedClassroom ? selectedClassroomForm.title || "Untitled Classroom" : selectedClassroom.title}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-100">
+                      {isEditingSelectedClassroom ? selectedClassroomForm.subject || "Subject" : selectedClassroom.subject}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-200">{selectedClassroomMetaText}</p>
+                    <p className="mt-1 text-xs font-medium text-slate-100">
+                      Teacher: {selectedClassroom.faculty_name || facultyName || "Faculty"}
                     </p>
                   </div>
                 </div>
 
+                <div className="sticky top-[-1rem] z-20 -mx-4 border-b border-slate-200 bg-white/95 px-4 py-2 backdrop-blur md:top-[-1.5rem] md:-mx-6 md:px-6">
+                  <div ref={classroomTabsRef} className="flex flex-wrap items-center gap-2">
+                    {[
+                      { key: "stream", label: "Stream" },
+                      { key: "classwork", label: "Classwork" },
+                      { key: "people", label: "People" },
+                      { key: "grades", label: "Grades" },
+                    ].map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => handleClassroomTabChange(tab.key)}
+                        className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                          selectedClassroomTab === tab.key
+                            ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
+                            : "text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div ref={classroomTabContentRef} className="scroll-mt-20" />
+
+                {selectedClassroomTab === "stream" && (
+                <>
                 <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
                   <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-5">
                     <h4 className="text-lg font-semibold text-slate-900">Classroom Overview</h4>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      {selectedClassroom.description || "No class description added yet."}
-                    </p>
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Section</p>
-                        <p className="font-medium text-slate-800">{selectedClassroom.section || "-"}</p>
+                    {isEditingSelectedClassroom ? (
+                      <div className="mt-3 space-y-3">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Class Name</span>
+                            <input
+                              name="title"
+                              value={selectedClassroomForm.title}
+                              onChange={handleSelectedClassroomField}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                              required
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Subject</span>
+                            <input
+                              name="subject"
+                              value={selectedClassroomForm.subject}
+                              onChange={handleSelectedClassroomField}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                              required
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Section</span>
+                            <input
+                              name="section"
+                              value={selectedClassroomForm.section}
+                              onChange={handleSelectedClassroomField}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Semester</span>
+                            <input
+                              name="semester"
+                              value={selectedClassroomForm.semester}
+                              onChange={handleSelectedClassroomField}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Department</span>
+                            <input
+                              name="department"
+                              value={selectedClassroomForm.department}
+                              onChange={handleSelectedClassroomField}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Year</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="8"
+                              name="year"
+                              value={selectedClassroomForm.year}
+                              onChange={handleSelectedClassroomField}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                            />
+                          </label>
+                          <label className="block sm:col-span-2">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Online Meeting Link</span>
+                            <input
+                              name="join_link"
+                              value={selectedClassroomForm.join_link}
+                              onChange={handleSelectedClassroomField}
+                              placeholder="https://meet.google.com/abc-defg-hij"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                            />
+                          </label>
+                        </div>
+                        <label className="block">
+                          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Description</span>
+                          <textarea
+                            name="description"
+                            rows={4}
+                            value={selectedClassroomForm.description}
+                            onChange={handleSelectedClassroomField}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                          />
+                        </label>
+                        <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+                          <button
+                            type="button"
+                            onClick={cancelEditingSelectedClassroom}
+                            className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={saveSelectedClassroomDetails}
+                            disabled={savingSelectedClassroom}
+                            className={`rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 ${
+                              savingSelectedClassroom ? "cursor-not-allowed opacity-60" : ""
+                            }`}
+                          >
+                            {savingSelectedClassroom ? "Saving..." : "Save Changes"}
+                          </button>
+                        </div>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Semester</p>
-                        <p className="font-medium text-slate-800">{selectedClassroom.semester || "-"}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Department</p>
-                        <p className="font-medium text-slate-800">{selectedClassroom.department || "-"}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">Year</p>
-                        <p className="font-medium text-slate-800">{selectedClassroom.year || "-"}</p>
-                      </div>
-                    </div>
+                    ) : (
+                      <>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          {selectedClassroom.description || "No class description added yet."}
+                        </p>
+                        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Section</p>
+                            <p className="font-medium text-slate-800">{selectedClassroom.section || "-"}</p>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Semester</p>
+                            <p className="font-medium text-slate-800">{selectedClassroom.semester || "-"}</p>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Department</p>
+                            <p className="font-medium text-slate-800">{selectedClassroom.department || "-"}</p>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">Year</p>
+                            <p className="font-medium text-slate-800">{selectedClassroom.year || "-"}</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 bg-white p-5">
@@ -1737,8 +2434,393 @@ function FacultyDashboard({ onLogout }) {
                         <span>R</span>
                       </button>
                     </div>
+
                   </div>
                 </div>
+
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+                  <h4 className="text-base font-semibold text-slate-900">Stream</h4>
+                  <form onSubmit={postClassroomAnnouncement} className="mt-3">
+                    <textarea
+                      rows={3}
+                      value={classroomAnnouncementDraft}
+                      onChange={(e) => setClassroomAnnouncementDraft(e.target.value)}
+                      placeholder="Post an announcement for this classroom..."
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                    />
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        type="submit"
+                        className="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                      >
+                        Post Announcement
+                      </button>
+                    </div>
+                  </form>
+
+                  {selectedClassroomAnnouncements.length === 0 ? (
+                    <p className="mt-3 text-sm text-slate-500">No announcements yet.</p>
+                  ) : (
+                    <div className="mt-3 max-h-60 space-y-2.5 overflow-y-auto pr-1">
+                      {selectedClassroomAnnouncements.map((item) => (
+                        <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <p className="text-sm text-slate-800 whitespace-pre-wrap">{item.body}</p>
+                          <p className="mt-1 text-xs text-slate-500">{new Date(item.created_at).toLocaleString()}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                </>
+                )}
+
+                {selectedClassroomTab === "classwork" && (
+                  <div className={`mt-4 border border-slate-200 bg-white ${showClassworkComposer ? "-mx-4 overflow-hidden rounded-none border-x-0 md:-mx-6" : "rounded-2xl p-5"}`}>
+                    {showClassworkComposer ? (
+                      <form onSubmit={publishClassworkFromClassroom} className="overflow-hidden bg-slate-50">
+                        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setShowClassworkComposer(false)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-600 hover:bg-slate-100"
+                              title="Close"
+                            >
+                              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M18 6 6 18M6 6l12 12" />
+                              </svg>
+                            </button>
+                            <p className="text-xl font-medium text-slate-900">
+                              {classworkTypeLabelMap[classworkCreateType] || "Classwork"}
+                            </p>
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={publishingClasswork || !classworkDraft.title.trim() || !classworkDraft.due_at}
+                            className={`rounded-full px-5 py-2 text-sm font-semibold ${
+                              publishingClasswork || !classworkDraft.title.trim() || !classworkDraft.due_at
+                                ? "cursor-not-allowed bg-slate-300 text-slate-600"
+                                : "bg-blue-600 text-white hover:bg-blue-700"
+                            }`}
+                          >
+                            {publishingClasswork ? "Publishing..." : "Assign"}
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12">
+                          <div className="border-r border-slate-200 bg-slate-50 p-4 lg:col-span-9">
+                            <div className="rounded-xl border border-slate-200 bg-white p-4">
+                              <input
+                                value={classworkDraft.title}
+                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, title: e.target.value }))}
+                                placeholder="Title *"
+                                className="w-full border-b border-red-300 px-1 py-2 text-xl text-slate-900 outline-none placeholder:text-slate-400"
+                                required
+                              />
+                              <p className="mt-1 text-xs text-red-500">*Required</p>
+
+                              <textarea
+                                rows={8}
+                                value={classworkDraft.description}
+                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, description: e.target.value }))}
+                                placeholder="Instructions (optional)"
+                                className="mt-4 w-full resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+                              />
+
+                              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <p className="text-sm font-medium text-slate-800">Attach</p>
+                                <div className="mt-3 flex flex-wrap items-center gap-3">
+                                  {["Drive", "YouTube", "Create", "Upload", "Link", "NotebookLM", "Gem"].map((item) => (
+                                    <button
+                                      key={item}
+                                      type="button"
+                                      className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                                    >
+                                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-100 text-[10px]">+</span>
+                                      {item}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <aside className="space-y-3 bg-white p-4 lg:col-span-3">
+                            <div>
+                              <p className="text-sm text-slate-700">For</p>
+                              <div className="mt-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                {selectedClassroom.title}
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-700">Assign to</p>
+                              <div className="mt-1 rounded-full border border-slate-300 px-3 py-2 text-center text-sm text-blue-700">
+                                All students
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-700">Points</p>
+                              <select
+                                value={classworkDraft.points}
+                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, points: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                              >
+                                <option value="100">100</option>
+                                <option value="50">50</option>
+                                <option value="25">25</option>
+                                <option value="10">10</option>
+                              </select>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-700">Due</p>
+                              <input
+                                type="datetime-local"
+                                value={classworkDraft.due_at}
+                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, due_at: e.target.value }))}
+                                className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                                required
+                              />
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-700">Topic</p>
+                              <input
+                                value={classworkDraft.topic}
+                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, topic: e.target.value }))}
+                                placeholder="No topic"
+                                className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                              />
+                            </div>
+                          </aside>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <h4 className="text-base font-semibold text-slate-900">Classwork</h4>
+                          <div className="relative" ref={classworkCreateMenuRef}>
+                            <button
+                              type="button"
+                              onClick={() => setShowClassworkCreateMenu((prev) => !prev)}
+                              className="inline-flex items-center gap-2 rounded-full border-2 border-blue-500 bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                            >
+                              <span className="text-lg leading-none">+</span>
+                              <span>Create</span>
+                            </button>
+
+                            {showClassworkCreateMenu && (
+                              <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+                                {classworkCreateItems.map((item) => (
+                                  <button
+                                    key={item.key}
+                                    type="button"
+                                    onClick={() => openClassworkComposer(item.key)}
+                                    className="flex w-full items-center justify-between px-4 py-3 text-left text-sm text-slate-800 hover:bg-slate-50"
+                                  >
+                                    <span>{item.label}</span>
+                                    <span className="text-slate-400">+</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-end">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
+                            {selectedClassroomAssignments.length} item{selectedClassroomAssignments.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                        {selectedClassroomAssignments.length === 0 ? (
+                          <p className="mt-3 text-sm text-slate-500">No assignments posted yet for this classroom.</p>
+                        ) : (
+                          <div className="mt-3 space-y-2.5">
+                            {selectedClassroomAssignments.map((item) => (
+                              <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  Subject: {item.subject} | Due: {item.due_at ? new Date(item.due_at).toLocaleString() : "No due date"}
+                                </p>
+                                {item.description && <p className="mt-2 text-sm text-slate-700">{item.description}</p>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {selectedClassroomTab === "people" && (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-6">
+                    <div className="border-b border-slate-200 pb-5">
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-2xl font-semibold text-slate-900">Teachers</h4>
+                        <button
+                          type="button"
+                          className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                          title="Manage teacher access"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                            <circle cx="8.5" cy="7" r="3.5" />
+                            <path d="M20 8v6" />
+                            <path d="M17 11h6" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="mt-4 flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+                          {(selectedClassroom.faculty_name || facultyName || "F").slice(0, 1).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold uppercase tracking-wide text-slate-900">
+                            {selectedClassroom.faculty_name || facultyName || "Faculty"}
+                          </p>
+                          <p className="text-xs text-slate-500">{profile.email || "Teacher account"}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-5">
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-2xl font-semibold text-slate-900">Students</h4>
+                        <button
+                          type="button"
+                          onClick={() => setShowPeopleInviteForm((prev) => !prev)}
+                          className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                          title="Invite students"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                            <circle cx="8.5" cy="7" r="3.5" />
+                            <path d="M20 8v6" />
+                            <path d="M17 11h6" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      {showPeopleInviteForm && (
+                        <form onSubmit={addStudentAccessEmail} className="mt-3 flex items-center gap-2">
+                          <input
+                            type="email"
+                            value={newClassroomAccessEmail}
+                            onChange={(e) => setNewClassroomAccessEmail(e.target.value)}
+                            placeholder="student@college.edu"
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          />
+                          <button
+                            type="submit"
+                            disabled={savingClassroomAccessEmail}
+                            className={`rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 ${
+                              savingClassroomAccessEmail ? "cursor-not-allowed opacity-60" : ""
+                            }`}
+                          >
+                            {savingClassroomAccessEmail ? "Inviting..." : "Invite"}
+                          </button>
+                        </form>
+                      )}
+
+                      {loadingClassroomAccessEmails ? (
+                        <p className="mt-3 text-sm text-slate-500">Loading invited students...</p>
+                      ) : classroomAccessEmails.length === 0 ? (
+                        <div className="mt-8 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                          <p className="text-sm text-slate-600">Add students to this class</p>
+                          <button
+                            type="button"
+                            onClick={() => setShowPeopleInviteForm(true)}
+                            className="mt-3 inline-flex items-center gap-2 rounded-full border-2 border-blue-600 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                          >
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                              <circle cx="8.5" cy="7" r="3.5" />
+                              <path d="M20 8v6" />
+                              <path d="M17 11h6" />
+                            </svg>
+                            Invite students
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-3 space-y-4">
+                          <div>
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-800">Invited by Email</p>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                                {classroomAccessEmails.length}
+                              </span>
+                            </div>
+                            <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+                              {classroomAccessEmails.map((entry) => (
+                                <div key={entry.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                                  <p className="truncate pr-2 text-sm text-slate-700">{entry.student_email}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeStudentAccessEmail(entry.id)}
+                                    disabled={removingClassroomAccessEmailId === entry.id}
+                                    className={`rounded-md border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 ${
+                                      removingClassroomAccessEmailId === entry.id ? "cursor-not-allowed opacity-60" : ""
+                                    }`}
+                                  >
+                                    {removingClassroomAccessEmailId === entry.id ? "..." : "Remove"}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="border-t border-slate-200 pt-4">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-800">Joined Students</p>
+                              <button
+                                type="button"
+                                onClick={() => loadSelectedClassroomPeople(selectedClassroom)}
+                                className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                              >
+                                Refresh
+                              </button>
+                            </div>
+                            {loadingClassroomPeople ? (
+                              <p className="text-sm text-slate-500">Loading students...</p>
+                            ) : classroomPeople.length === 0 ? (
+                              <p className="text-sm text-slate-500">No students joined yet.</p>
+                            ) : (
+                              <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
+                                {classroomPeople.map((row) => (
+                                  <div key={row.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                                    <p className="text-sm font-medium text-slate-800">{row.student_name || "Student"}</p>
+                                    <p className="mt-0.5 text-xs text-slate-600">{row.student_email || "-"}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {selectedClassroomTab === "grades" && (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+                    <h4 className="text-base font-semibold text-slate-900">Grades</h4>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Assignments</p>
+                        <p className="text-lg font-semibold text-slate-800">{selectedClassroomAssignments.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Students</p>
+                        <p className="text-lg font-semibold text-slate-800">{classroomPeople.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Stream Posts</p>
+                        <p className="text-lg font-semibold text-slate-800">{selectedClassroomAnnouncements.length}</p>
+                      </div>
+                    </div>
+                    <p className="mt-4 text-sm text-slate-600">
+                      Gradebook analytics can be extended here with submission-level marks and averages.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : loadingFacultyClassrooms ? (
               <p className="text-sm text-slate-500 mt-4">Loading classrooms...</p>
@@ -1753,14 +2835,15 @@ function FacultyDashboard({ onLogout }) {
                   <div
                     key={room.id}
                     className="cursor-pointer overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
-                    onClick={() => setSelectedClassroom(room)}
+                    onClick={() => {
+                      setSelectedClassroom(room);
+                      setSelectedClassroomTab("stream");
+                    }}
                   >
                     <div
                       className="relative h-28 px-4 py-3 text-white"
                       style={{
-                        backgroundImage: room.cover_image_url
-                          ? `linear-gradient(120deg, rgba(15,23,42,0.35), rgba(15,23,42,0.2)), url('${room.cover_image_url}')`
-                          : classroomThemePresets[index % classroomThemePresets.length].className,
+                        backgroundImage: getClassroomCoverBackground(room, index),
                         backgroundSize: "cover",
                         backgroundPosition: "center",
                       }}
@@ -1822,8 +2905,20 @@ function FacultyDashboard({ onLogout }) {
           {showCreateClassroomModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 p-4">
               <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-                <div className="border-b border-slate-200 px-5 py-4">
+                <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                   <h4 className="text-lg font-semibold uppercase tracking-wide text-slate-900">Create a New Classroom</h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateClassroomModal(false)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                    aria-label="Close create classroom dialog"
+                    title="Close"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M6 6l12 12" />
+                      <path d="M18 6 6 18" />
+                    </svg>
+                  </button>
                 </div>
 
                 <form onSubmit={submitFacultyClassroom} className="max-h-[78vh] overflow-y-auto px-5 py-4">

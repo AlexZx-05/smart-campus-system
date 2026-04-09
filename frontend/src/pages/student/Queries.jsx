@@ -68,6 +68,8 @@ function Queries() {
   const [submitting, setSubmitting] = useState(false);
   const [loadingQueries, setLoadingQueries] = useState(false);
   const [queries, setQueries] = useState([]);
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
   const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState("");
@@ -136,6 +138,25 @@ function Queries() {
     () => queries.filter((query) => query.status === "resolved" || query.status === "closed").length,
     [queries]
   );
+  const filteredHistoryQueries = useMemo(() => {
+    const keyword = historySearch.trim().toLowerCase();
+    return queries.filter((query) => {
+      if (historyStatusFilter !== "all" && query.status !== historyStatusFilter) return false;
+      if (!keyword) return true;
+      const searchableText = [
+        query.subject,
+        query.body,
+        query.admin_note,
+        labelMap[query.category] || query.category,
+        labelMap[query.priority] || query.priority,
+        formatStatus(query.status),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchableText.includes(keyword);
+    });
+  }, [queries, historySearch, historyStatusFilter]);
 
   const handleFormChange = (e) => {
     const { name, value, files, type } = e.target;
@@ -406,13 +427,54 @@ function Queries() {
           </button>
         </div>
 
+        {!loadingQueries && queries.length > 0 && (
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-5">
+            <div className="sm:col-span-3">
+              <input
+                type="text"
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+                placeholder="Search by subject, query text, admin note, category, priority..."
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+            <div className="sm:col-span-1">
+              <select
+                value={historyStatusFilter}
+                onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="all">All Statuses</option>
+                <option value="open">Open</option>
+                <option value="in_progress">In Progress</option>
+                <option value="resolved">Resolved</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+            <div className="sm:col-span-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setHistorySearch("");
+                  setHistoryStatusFilter("all");
+                }}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
+
         {loadingQueries ? (
           <p className="mt-4 text-sm text-slate-500">Loading your queries...</p>
         ) : queries.length === 0 ? (
           <p className="mt-4 text-sm text-slate-500">No queries submitted yet.</p>
+        ) : filteredHistoryQueries.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">No queries match your search/filter.</p>
         ) : (
           <div className="mt-4 space-y-3">
-            {queries.map((query) => (
+            {filteredHistoryQueries.map((query) => (
               <div
                 key={query.id}
                 className={`rounded-lg border border-slate-200 border-l-4 p-4 ${

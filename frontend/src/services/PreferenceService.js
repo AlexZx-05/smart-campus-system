@@ -303,6 +303,26 @@ const PreferenceService = {
     return response.data;
   },
 
+  updateFacultyClassroom: async (classroomId, payload) => {
+    const response = await API.patch(`/faculty/classrooms/${classroomId}`, payload);
+    return response.data;
+  },
+
+  getFacultyClassroomAccessEmails: async (classroomId) => {
+    const response = await API.get(`/faculty/classrooms/${classroomId}/access-emails`);
+    return response.data;
+  },
+
+  addFacultyClassroomAccessEmail: async (classroomId, student_email) => {
+    const response = await API.post(`/faculty/classrooms/${classroomId}/access-emails`, { student_email });
+    return response.data;
+  },
+
+  removeFacultyClassroomAccessEmail: async (classroomId, accessEmailId) => {
+    const response = await API.delete(`/faculty/classrooms/${classroomId}/access-emails/${accessEmailId}`);
+    return response.data;
+  },
+
   getStudentClassroomInvites: async () => {
     const response = await API.get("/student/classrooms/invites");
     return response.data;
