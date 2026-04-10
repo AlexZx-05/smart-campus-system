@@ -5,18 +5,40 @@ import DashboardService from "../../services/DashboardService";
 import FacultyService from "../../services/FacultyService";
 import EventService from "../../services/EventService";
 import AnnouncementCarousel from "../../components/AnnouncementCarousel";
+import Queries from "../student/Queries";
+import CalendarPage from "../student/CalendarPage";
+
+const notificationAvatarPalette = [
+  "from-cyan-400 to-blue-600",
+  "from-emerald-400 to-teal-600",
+  "from-fuchsia-400 to-pink-600",
+  "from-orange-400 to-rose-600",
+  "from-violet-400 to-indigo-600",
+];
+
+const notificationInitialsFrom = (name = "") =>
+  name
+    .split(" ")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("") || "N";
+
+const notificationTimeAgo = (iso) => {
+  const value = new Date(iso).getTime();
+  if (Number.isNaN(value)) return "";
+  const diffSec = Math.max(0, Math.floor((Date.now() - value) / 1000));
+  if (diffSec < 60) return "just now";
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `${mins} min${mins > 1 ? "s" : ""} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr${hours > 1 ? "s" : ""} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days > 1 ? "s" : ""} ago`;
+};
 
 function FacultyDashboard({ onLogout }) {
-  const defaultAvatar =
-    "data:image/svg+xml;utf8," +
-    encodeURIComponent(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'>
-        <rect width='160' height='160' fill='#E2E8F0'/>
-        <circle cx='80' cy='64' r='28' fill='#94A3B8'/>
-        <rect x='36' y='102' width='88' height='40' rx='20' fill='#94A3B8'/>
-      </svg>`
-    );
-
   const [activePage, setActivePage] = useState("dashboard");
   const [facultyName, setFacultyName] = useState("Faculty");
   const [currentUserId, setCurrentUserId] = useState(null);
@@ -30,6 +52,7 @@ function FacultyDashboard({ onLogout }) {
   });
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
+  const [profileTab, setProfileTab] = useState("general");
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -80,16 +103,6 @@ function FacultyDashboard({ onLogout }) {
   const [inboxMessages, setInboxMessages] = useState([]);
   const [loadingInboxMessages, setLoadingInboxMessages] = useState(false);
   const [inboxError, setInboxError] = useState("");
-  const [queryForm, setQueryForm] = useState({
-    subject: "",
-    body: "",
-    category: "general",
-    priority: "normal",
-  });
-  const [myQueries, setMyQueries] = useState([]);
-  const [loadingMyQueries, setLoadingMyQueries] = useState(false);
-  const [queryMessage, setQueryMessage] = useState("");
-  const [queryError, setQueryError] = useState("");
   const [teacherDirectory, setTeacherDirectory] = useState([]);
   const [loadingTeacherDirectory, setLoadingTeacherDirectory] = useState(false);
   const [teacherDirectoryError, setTeacherDirectoryError] = useState("");
@@ -162,6 +175,7 @@ function FacultyDashboard({ onLogout }) {
   const [removingClassroomAccessEmailId, setRemovingClassroomAccessEmailId] = useState(null);
   const [selectedClassroomTab, setSelectedClassroomTab] = useState("stream");
   const [classroomAnnouncementDraft, setClassroomAnnouncementDraft] = useState("");
+  const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
   const [classroomAnnouncementsById, setClassroomAnnouncementsById] = useState({});
   const [classroomPeople, setClassroomPeople] = useState([]);
   const [loadingClassroomPeople, setLoadingClassroomPeople] = useState(false);
@@ -176,6 +190,10 @@ function FacultyDashboard({ onLogout }) {
     points: "100",
     topic: "",
   });
+  const [quizGradeImporting, setQuizGradeImporting] = useState(true);
+  const [questionType, setQuestionType] = useState("short_answer");
+  const [allowStudentReplies, setAllowStudentReplies] = useState(true);
+  const [allowStudentEditAnswer, setAllowStudentEditAnswer] = useState(false);
   const [showPeopleInviteForm, setShowPeopleInviteForm] = useState(false);
   const [selectedClassroomForm, setSelectedClassroomForm] = useState({
     title: "",
@@ -206,7 +224,7 @@ function FacultyDashboard({ onLogout }) {
     { key: "my-timetable", label: "My Timetable" },
     { key: "all-classes", label: "All Classes" },
     { key: "preferences", label: "Submit Preference" },
-    { key: "assignments", label: "Assignments" },
+    { key: "assignments", label: "Classroom" },
     { key: "calendar", label: "Calendar" },
     { key: "notifications", label: "Notifications" },
     { key: "messages", label: "Messages" },
@@ -220,7 +238,7 @@ function FacultyDashboard({ onLogout }) {
     "my-timetable": "My Timetable",
     "all-classes": "All Classes",
     preferences: "Submit Preference",
-    assignments: "Assignments",
+    assignments: "Classroom",
     calendar: "Calendar",
     notifications: "Notifications",
     messages: "Messages",
@@ -335,24 +353,6 @@ function FacultyDashboard({ onLogout }) {
     }
   };
 
-  const loadMyQueries = async () => {
-    setLoadingMyQueries(true);
-    setQueryError("");
-    try {
-      const data = await PreferenceService.getMySupportQueries();
-      setMyQueries(data || []);
-    } catch (err) {
-      const status = err.response?.status;
-      if (status === 404 || status >= 500) {
-        setQueryError("Unable to load queries right now. Please restart backend and refresh this page.");
-      } else {
-        setQueryError(err.response?.data?.message || "Failed to load your queries.");
-      }
-    } finally {
-      setLoadingMyQueries(false);
-    }
-  };
-
   const loadTeacherDirectory = async (searchValue = "") => {
     setLoadingTeacherDirectory(true);
     setTeacherDirectoryError("");
@@ -377,6 +377,10 @@ function FacultyDashboard({ onLogout }) {
     } finally {
       setLoadingFacultyInbox(false);
     }
+  };
+
+  const refreshFacultyNotifications = async () => {
+    await Promise.all([loadInboxMessages(), loadFacultyPeerInbox()]);
   };
 
   const loadFacultyConflicts = async () => {
@@ -480,7 +484,6 @@ function FacultyDashboard({ onLogout }) {
   useEffect(() => {
     if (activePage === "preferences") loadMyPreferences();
     if (activePage === "profile") loadProfile();
-    if (activePage === "calendar") loadCalendarEvents();
     if (activePage === "dashboard") {
       loadInboxMessages();
       loadFacultyTimetable();
@@ -489,9 +492,6 @@ function FacultyDashboard({ onLogout }) {
     if (activePage === "notifications") {
       loadInboxMessages();
       loadFacultyPeerInbox();
-    }
-    if (activePage === "messages") {
-      loadMyQueries();
     }
     if (activePage === "teachers") {
       loadTeacherDirectory();
@@ -512,12 +512,6 @@ function FacultyDashboard({ onLogout }) {
       loadFacultyTimetable();
     }
   }, [semesterFilter]);
-
-  useEffect(() => {
-    if (!queryMessage) return undefined;
-    const timer = setTimeout(() => setQueryMessage(""), 1800);
-    return () => clearTimeout(timer);
-  }, [queryMessage]);
 
   useEffect(() => {
     if (!facultyMessageFeedback) return undefined;
@@ -584,6 +578,12 @@ function FacultyDashboard({ onLogout }) {
       setShowClassworkComposer(false);
     }
   }, [selectedClassroomTab]);
+
+  useEffect(() => {
+    if (selectedClassroomTab !== "stream" || !selectedClassroom?.id) {
+      setShowAnnouncementModal(false);
+    }
+  }, [selectedClassroomTab, selectedClassroom?.id]);
 
   useEffect(() => {
     const onPointerDown = (event) => {
@@ -677,32 +677,6 @@ function FacultyDashboard({ onLogout }) {
     setPreferenceForm((prev) => ({ ...prev, [name]: value }));
     setPreferenceMessage("");
     setPreferenceError("");
-  };
-
-  const handleQueryInput = (e) => {
-    const { name, value } = e.target;
-    setQueryForm((prev) => ({ ...prev, [name]: value }));
-    setQueryMessage("");
-    setQueryError("");
-  };
-
-  const submitQueryToAdmin = async (e) => {
-    e.preventDefault();
-    setQueryMessage("");
-    setQueryError("");
-    try {
-      const res = await PreferenceService.createSupportQuery(queryForm);
-      setQueryMessage(res.message || "Query submitted to admin.");
-      setQueryForm({
-        subject: "",
-        body: "",
-        category: "general",
-        priority: "normal",
-      });
-      await loadMyQueries();
-    } catch (err) {
-      setQueryError(err.response?.data?.message || "Failed to submit query.");
-    }
   };
 
   const handleTeacherSearch = async (e) => {
@@ -1167,6 +1141,34 @@ function FacultyDashboard({ onLogout }) {
     return classroomAnnouncementsById[selectedClassroom.id] || [];
   }, [selectedClassroom?.id, classroomAnnouncementsById]);
 
+  const facultyNotificationFeedItems = useMemo(() => {
+    const announcementItems = (inboxMessages || []).map((msg) => ({
+      id: `announce-${msg.id}`,
+      actorName: msg.sender_name || "Admin",
+      actionText: "sent an announcement",
+      bodyText: msg.body || msg.subject || "",
+      createdAt: msg.created_at,
+      subject: msg.subject || "",
+      kind: "announcement",
+      roleTag: msg.recipient_role || "faculty",
+    }));
+
+    const teacherMessageItems = (facultyInbox || []).map((msg) => ({
+      id: `teacher-${msg.id}`,
+      actorName: msg.sender_name || "Teacher",
+      actionText: "sent a teacher message",
+      bodyText: msg.body || msg.subject || "",
+      createdAt: msg.created_at,
+      subject: msg.subject || "",
+      kind: "teacher_message",
+      senderEmail: msg.sender_email || "",
+    }));
+
+    return [...announcementItems, ...teacherMessageItems].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [inboxMessages, facultyInbox]);
+
   const handleSelectedClassroomField = (e) => {
     const { name, value } = e.target;
     setSelectedClassroomForm((prev) => ({ ...prev, [name]: value }));
@@ -1335,6 +1337,10 @@ function FacultyDashboard({ onLogout }) {
     setShowClassworkComposer(true);
     setShowClassworkCreateMenu(false);
     setClassworkDraft({ title: "", description: "", due_at: "", points: "100", topic: "" });
+    setQuizGradeImporting(true);
+    setQuestionType("short_answer");
+    setAllowStudentReplies(true);
+    setAllowStudentEditAnswer(false);
     setAssignmentMessage("");
     setAssignmentError("");
   };
@@ -1346,7 +1352,7 @@ function FacultyDashboard({ onLogout }) {
       setAssignmentError("Title is required.");
       return;
     }
-    if (!classworkDraft.due_at) {
+    if (["assignment", "quiz_assignment"].includes(classworkCreateType) && !classworkDraft.due_at) {
       setAssignmentError("Due date and time is required.");
       return;
     }
@@ -1365,7 +1371,9 @@ function FacultyDashboard({ onLogout }) {
       formData.append("department", selectedClassroom.department || "");
       formData.append("year", selectedClassroom.year || "");
       formData.append("section", selectedClassroom.section || "");
-      formData.append("due_at", new Date(classworkDraft.due_at).toISOString());
+      const fallbackDue = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const dueAtIso = classworkDraft.due_at ? new Date(classworkDraft.due_at).toISOString() : fallbackDue;
+      formData.append("due_at", dueAtIso);
       formData.append("reminder_enabled", "true");
       formData.append("reminder_days_before", "1");
       formData.append("resource_links", "");
@@ -1396,6 +1404,7 @@ function FacultyDashboard({ onLogout }) {
       [selectedClassroom.id]: [newItem, ...(prev[selectedClassroom.id] || [])],
     }));
     setClassroomAnnouncementDraft("");
+    setShowAnnouncementModal(false);
     setAssignmentMessage("Announcement posted in stream.");
     setAssignmentError("");
   };
@@ -1761,55 +1770,60 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "profile") {
+      const tabs = [
+        { key: "general", label: "General" },
+        { key: "professional", label: "Professional" },
+        { key: "account", label: "Account" },
+      ];
+      const nameParts = (profile.name || "Faculty")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+      const profileInitials = nameParts.length >= 2
+        ? `${nameParts[0][0] || ""}${nameParts[1][0] || ""}`.toUpperCase()
+        : (nameParts[0] || "F").slice(0, 2).toUpperCase();
+
       return (
-        <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_64px_-28px_rgba(15,23,42,0.45)]">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.12),transparent_52%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.14),transparent_58%)]" />
-          <div className="relative p-6 md:p-8">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
-                  Faculty Workspace
-                </p>
-                <h3 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">Faculty Profile</h3>
-                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-                  Update your details used for timetable and administration.
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Profile status</p>
-                <p className="mt-1 text-sm font-semibold text-emerald-700">Ready to publish</p>
-              </div>
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h3 className="text-2xl font-semibold tracking-tight text-slate-900">Edit Profile</h3>
+            <p className="mt-0.5 text-sm text-slate-500">Maintain your faculty information and professional details.</p>
+          </div>
+
+          {profileMessage && (
+            <div className="mx-6 mt-5 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              {profileMessage}
             </div>
+          )}
+          {profileError && (
+            <div className="mx-6 mt-5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+              {profileError}
+            </div>
+          )}
 
-            {profileMessage && (
-              <div className="mt-6 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                {profileMessage}
-              </div>
-            )}
-            {profileError && (
-              <div className="mt-6 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {profileError}
-              </div>
-            )}
-
-            {loadingProfile ? (
-              <p className="mt-6 text-sm text-slate-500">Loading profile...</p>
-            ) : (
-              <form className="mt-7 grid grid-cols-1 gap-6 xl:grid-cols-5" onSubmit={handleProfileSave}>
-                <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-6 text-white">
-                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">Faculty profile</p>
-                  <div className="mt-5 flex items-center gap-4">
+          {loadingProfile ? (
+            <p className="px-6 py-6 text-sm text-slate-500">Loading profile...</p>
+          ) : (
+            <div className="p-5">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center gap-4">
+                  {profile.profile_image_url ? (
                     <img
-                      src={profile.profile_image_url || defaultAvatar}
+                      src={profile.profile_image_url}
                       alt="Faculty profile"
-                      className="h-20 w-20 rounded-2xl object-cover ring-2 ring-white/35"
+                      className="h-20 w-20 rounded-2xl object-cover ring-1 ring-slate-200"
                     />
-                    <div>
-                      <p className="text-base font-semibold text-white">{profile.name || "Faculty Member"}</p>
-                      <p className="mt-1 text-xs text-slate-200">{profile.department || "Department pending"}</p>
+                  ) : (
+                    <div className="h-20 w-20 rounded-2xl bg-slate-200 flex items-center justify-center text-2xl font-semibold text-slate-700 ring-1 ring-slate-200">
+                      {profileInitials}
                     </div>
+                  )}
+                  <div className="min-w-[220px] flex-1">
+                    <p className="text-[34px] leading-none font-semibold text-slate-900">{profile.name || "Faculty"}</p>
+                    <p className="mt-1 text-sm text-slate-600">{profile.department || "Department pending"}</p>
+                    <p className="text-sm text-slate-600">{profile.roll_number || "Employee number pending"}</p>
                   </div>
-                  <label className="mt-5 inline-flex cursor-pointer items-center rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/20">
+                  <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100">
                     {uploadingPhoto ? "Uploading..." : "Upload Photo"}
                     <input
                       type="file"
@@ -1819,67 +1833,109 @@ function FacultyDashboard({ onLogout }) {
                       disabled={uploadingPhoto}
                     />
                   </label>
-                  <p className="mt-3 text-xs leading-relaxed text-slate-200">
-                    Use a clear headshot (JPG/PNG/WEBP). Your photo is shown in timetable and faculty listings.
-                  </p>
                 </div>
+              </div>
 
-                <div className="xl:col-span-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="mt-4 border-b border-slate-200">
+                <div className="flex flex-wrap gap-2 pb-2">
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setProfileTab(tab.key)}
+                      className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                        profileTab === tab.key
+                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                          : "text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {profileTab === "general" && (
+                <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={handleProfileSave}>
                   <div className="md:col-span-2">
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">Full Name</label>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">Full Name</label>
                     <input
                       name="name"
                       value={profile.name}
                       onChange={handleProfileChange}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-800 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
                       required
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">Email</label>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">Email</label>
                     <input
                       name="email"
                       value={profile.email}
-                      className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-slate-500"
+                      className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-slate-500"
                       disabled
                     />
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">Department</label>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">Department</label>
                     <input
                       name="department"
                       value={profile.department}
                       onChange={handleProfileChange}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-800 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
                       required
                     />
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">Employee Number</label>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">Employee Number</label>
                     <input
                       name="roll_number"
                       value={profile.roll_number}
                       onChange={handleProfileChange}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-800 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-100"
                       required
                     />
                   </div>
-                  <div className="md:col-span-2 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <p className="text-sm text-slate-600">Keep profile details accurate for conflict-free scheduling.</p>
+                  <div className="md:col-span-2 flex items-center justify-end gap-2 border-t border-slate-200 pt-3 mt-1">
+                    <button
+                      type="button"
+                      onClick={loadProfile}
+                      className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                    >
+                      Cancel
+                    </button>
                     <button
                       type="submit"
                       disabled={savingProfile}
-                      className={`rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-slate-200 ${
+                      className={`rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 ${
                         savingProfile ? "cursor-not-allowed opacity-60" : ""
                       }`}
                     >
-                      {savingProfile ? "Saving..." : "Save Profile"}
+                      {savingProfile ? "Saving..." : "Save Changes"}
                     </button>
                   </div>
+                </form>
+              )}
+
+              {profileTab === "professional" && (
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-sm font-medium text-slate-800">Professional Snapshot</p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Department and employee number are used for timetable allocation, classroom ownership, and faculty records.
+                  </p>
                 </div>
-              </form>
-            )}
-          </div>
+              )}
+
+              {profileTab === "account" && (
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <p className="text-sm font-medium text-slate-800">Account</p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Email is managed by authentication settings and remains read-only here.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }
@@ -2186,87 +2242,91 @@ function FacultyDashboard({ onLogout }) {
 
             {selectedClassroom ? (
               <div className="mt-2">
-                <div
-                  className="overflow-hidden rounded-2xl border border-slate-200"
-                  style={{
-                    backgroundImage: getClassroomCoverBackground(
-                      selectedClassroom,
-                      Math.max(
-                        0,
-                        facultyClassrooms.findIndex((room) => room.id === selectedClassroom.id)
-                      ),
-                      true
-                    ),
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }}
-                >
-                  <div className="px-6 py-6 text-white">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedClassroom(null)}
-                        className="inline-flex items-center gap-2 rounded-xl border border-white/35 bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/15"
-                      >
-                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M15 18l-6-6 6-6" />
-                        </svg>
-                        Back to Classrooms
-                      </button>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={isEditingSelectedClassroom ? cancelEditingSelectedClassroom : startEditingSelectedClassroom}
-                          className="rounded-xl border border-white/35 bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
-                        >
-                          {isEditingSelectedClassroom ? "Cancel Edit" : "Edit Details"}
-                        </button>
-                        <a
-                          href={selectedClassroom.join_link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
-                        >
-                          Open Live Class
-                        </a>
+                {!(selectedClassroomTab === "classwork" && showClassworkComposer) && (
+                  <>
+                    <div
+                      className="overflow-hidden rounded-2xl border border-slate-200"
+                      style={{
+                        backgroundImage: getClassroomCoverBackground(
+                          selectedClassroom,
+                          Math.max(
+                            0,
+                            facultyClassrooms.findIndex((room) => room.id === selectedClassroom.id)
+                          ),
+                          true
+                        ),
+                        backgroundSize: "cover",
+                        backgroundPosition: "center",
+                      }}
+                    >
+                      <div className="px-6 py-6 text-white">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedClassroom(null)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-white/35 bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/15"
+                          >
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M15 18l-6-6 6-6" />
+                            </svg>
+                            Back to Classrooms
+                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={isEditingSelectedClassroom ? cancelEditingSelectedClassroom : startEditingSelectedClassroom}
+                              className="rounded-xl border border-white/35 bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                            >
+                              {isEditingSelectedClassroom ? "Cancel Edit" : "Edit Details"}
+                            </button>
+                            <a
+                              href={selectedClassroom.join_link}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
+                            >
+                              Open Live Class
+                            </a>
+                          </div>
+                        </div>
+                        <p className="mt-5 text-3xl font-semibold tracking-tight">
+                          {isEditingSelectedClassroom ? selectedClassroomForm.title || "Untitled Classroom" : selectedClassroom.title}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-100">
+                          {isEditingSelectedClassroom ? selectedClassroomForm.subject || "Subject" : selectedClassroom.subject}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-200">{selectedClassroomMetaText}</p>
+                        <p className="mt-1 text-xs font-medium text-slate-100">
+                          Teacher: {selectedClassroom.faculty_name || facultyName || "Faculty"}
+                        </p>
                       </div>
                     </div>
-                    <p className="mt-5 text-3xl font-semibold tracking-tight">
-                      {isEditingSelectedClassroom ? selectedClassroomForm.title || "Untitled Classroom" : selectedClassroom.title}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-100">
-                      {isEditingSelectedClassroom ? selectedClassroomForm.subject || "Subject" : selectedClassroom.subject}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-200">{selectedClassroomMetaText}</p>
-                    <p className="mt-1 text-xs font-medium text-slate-100">
-                      Teacher: {selectedClassroom.faculty_name || facultyName || "Faculty"}
-                    </p>
-                  </div>
-                </div>
 
-                <div className="sticky top-[-1rem] z-20 -mx-4 border-b border-slate-200 bg-white/95 px-4 py-2 backdrop-blur md:top-[-1.5rem] md:-mx-6 md:px-6">
-                  <div ref={classroomTabsRef} className="flex flex-wrap items-center gap-2">
-                    {[
-                      { key: "stream", label: "Stream" },
-                      { key: "classwork", label: "Classwork" },
-                      { key: "people", label: "People" },
-                      { key: "grades", label: "Grades" },
-                    ].map((tab) => (
-                      <button
-                        key={tab.key}
-                        type="button"
-                        onClick={() => handleClassroomTabChange(tab.key)}
-                        className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                          selectedClassroomTab === tab.key
-                            ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
-                            : "text-slate-600 hover:bg-slate-100"
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                    <div className="sticky top-[-1rem] z-20 -mx-4 border-b border-slate-200 bg-white/95 px-4 py-2 backdrop-blur md:top-[-1.5rem] md:-mx-6 md:px-6">
+                      <div ref={classroomTabsRef} className="flex flex-wrap items-center gap-2">
+                        {[
+                          { key: "stream", label: "Stream" },
+                          { key: "classwork", label: "Classwork" },
+                          { key: "people", label: "People" },
+                          { key: "grades", label: "Grades" },
+                        ].map((tab) => (
+                          <button
+                            key={tab.key}
+                            type="button"
+                            onClick={() => handleClassroomTabChange(tab.key)}
+                            className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                              selectedClassroomTab === tab.key
+                                ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
+                                : "text-slate-600 hover:bg-slate-100"
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 <div ref={classroomTabContentRef} className="scroll-mt-20" />
 
@@ -2414,24 +2474,41 @@ function FacultyDashboard({ onLogout }) {
                         rel="noreferrer"
                         className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
                       >
-                        Open class meeting
-                        <span>{">"}</span>
+                        <span>Open class meeting</span>
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M7 17 17 7" />
+                            <path d="M9 7h8v8" />
+                          </svg>
+                        </span>
                       </a>
                       <button
                         type="button"
                         onClick={() => navigator.clipboard?.writeText(selectedClassroom.join_link || "")}
                         className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
                       >
-                        Copy class link
-                        <span>#</span>
+                        <span>Copy class link</span>
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <rect x="4" y="4" width="11" height="11" rx="2" />
+                          </svg>
+                        </span>
                       </button>
                       <button
                         type="button"
                         onClick={loadFacultyClassrooms}
                         className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
                       >
-                        Refresh classroom data
-                        <span>R</span>
+                        <span>Refresh classroom data</span>
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M3 12a9 9 0 0 1 15.3-6.36L21 8" />
+                            <path d="M21 3v5h-5" />
+                            <path d="M21 12a9 9 0 0 1-15.3 6.36L3 16" />
+                            <path d="M3 21v-5h5" />
+                          </svg>
+                        </span>
                       </button>
                     </div>
 
@@ -2439,46 +2516,142 @@ function FacultyDashboard({ onLogout }) {
                 </div>
 
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
-                  <h4 className="text-base font-semibold text-slate-900">Stream</h4>
-                  <form onSubmit={postClassroomAnnouncement} className="mt-3">
-                    <textarea
-                      rows={3}
-                      value={classroomAnnouncementDraft}
-                      onChange={(e) => setClassroomAnnouncementDraft(e.target.value)}
-                      placeholder="Post an announcement for this classroom..."
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
-                    />
-                    <div className="mt-2 flex justify-end">
-                      <button
-                        type="submit"
-                        className="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                      >
-                        Post Announcement
-                      </button>
-                    </div>
-                  </form>
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-slate-900">Stream</h4>
+                    <button
+                      type="button"
+                      onClick={() => setShowAnnouncementModal(true)}
+                      className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-100 px-5 py-2.5 text-sm font-semibold text-sky-900 transition hover:bg-sky-200"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 21h3.75L19.81 7.94l-3.75-3.75L3 17.25V21z" />
+                        <path d="m14.06 4.19 3.75 3.75" />
+                      </svg>
+                      <span>New announcement</span>
+                    </button>
+                  </div>
 
                   {selectedClassroomAnnouncements.length === 0 ? (
-                    <p className="mt-3 text-sm text-slate-500">No announcements yet.</p>
+                    <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                      No announcements yet.
+                    </div>
                   ) : (
-                    <div className="mt-3 max-h-60 space-y-2.5 overflow-y-auto pr-1">
+                    <div className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
                       {selectedClassroomAnnouncements.map((item) => (
-                        <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                          <p className="text-sm text-slate-800 whitespace-pre-wrap">{item.body}</p>
-                          <p className="mt-1 text-xs text-slate-500">{new Date(item.created_at).toLocaleString()}</p>
-                        </div>
+                        <article key={item.id} className="rounded-xl border border-slate-200 bg-white p-3.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
+                                {(facultyName || "F").slice(0, 1).toUpperCase()}
+                              </span>
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                {selectedClassroom.faculty_name || facultyName || "Faculty"}
+                              </p>
+                            </div>
+                            <p className="text-xs text-slate-500">{new Date(item.created_at).toLocaleString()}</p>
+                          </div>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-800">{item.body}</p>
+                        </article>
                       ))}
                     </div>
                   )}
                 </div>
+
+                {showAnnouncementModal && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+                    <div className="w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+                      <div className="flex items-start justify-between border-b border-slate-200 px-6 py-5">
+                        <div>
+                          <h4 className="text-2xl font-semibold text-slate-900">Post</h4>
+                          <p className="mt-1 text-sm text-slate-500">Share a quick update with your class stream.</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAnnouncementModal(false)}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600 hover:bg-slate-100"
+                          aria-label="Close"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6 6 18M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      <form onSubmit={postClassroomAnnouncement} className="bg-slate-50 px-6 py-5">
+                        <textarea
+                          rows={7}
+                          maxLength={1000}
+                          value={classroomAnnouncementDraft}
+                          onChange={(e) => setClassroomAnnouncementDraft(e.target.value)}
+                          placeholder="Announce something to your class"
+                          className="w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-base leading-7 text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          autoFocus
+                        />
+
+                        <div className="mt-3 flex items-center justify-between border-b border-slate-200 pb-3">
+                          <div className="flex items-center gap-1">
+                            <button type="button" className="rounded-md px-2 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-200">B</button>
+                            <button type="button" className="rounded-md px-2 py-1.5 text-sm italic text-slate-600 hover:bg-slate-200">I</button>
+                            <button type="button" className="rounded-md px-2 py-1.5 text-sm underline text-slate-600 hover:bg-slate-200">U</button>
+                            <button type="button" className="rounded-md px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-200">• List</button>
+                          </div>
+                          <span className="text-xs text-slate-500">{(classroomAnnouncementDraft || "").length}/1000</span>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 text-slate-500">
+                            <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 hover:bg-slate-100" title="Attach file">
+                              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="m21.44 11.05-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.48a3 3 0 0 1 4.24 4.24l-8.49 8.49a1 1 0 0 1-1.41-1.42l7.78-7.78" />
+                              </svg>
+                            </button>
+                            <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 hover:bg-slate-100" title="Add link">
+                              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L10 5" />
+                                <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L14 18" />
+                              </svg>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setShowAnnouncementModal(false)}
+                              className="rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={!(classroomAnnouncementDraft || "").trim()}
+                              className={`rounded-xl px-5 py-2 text-sm font-semibold ${
+                                (classroomAnnouncementDraft || "").trim()
+                                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                                  : "cursor-not-allowed bg-slate-300 text-slate-500"
+                              }`}
+                            >
+                              Post
+                            </button>
+                          </div>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
                 </>
                 )}
 
                 {selectedClassroomTab === "classwork" && (
-                  <div className={`mt-4 border border-slate-200 bg-white ${showClassworkComposer ? "-mx-4 overflow-hidden rounded-none border-x-0 md:-mx-6" : "rounded-2xl p-5"}`}>
+                  <div
+                    className={`${
+                      showClassworkComposer
+                        ? "-mx-4 mt-0 overflow-hidden rounded-none border-x-0 border-y-0 bg-slate-50 md:-mx-6"
+                        : "mt-4 rounded-2xl border border-slate-200 bg-white p-5"
+                    }`}
+                  >
                     {showClassworkComposer ? (
-                      <form onSubmit={publishClassworkFromClassroom} className="overflow-hidden bg-slate-50">
-                        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+                      <form onSubmit={publishClassworkFromClassroom} className="min-h-[72vh] overflow-hidden bg-slate-50">
+                        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
                           <div className="flex items-center gap-3">
                             <button
                               type="button"
@@ -2490,107 +2663,437 @@ function FacultyDashboard({ onLogout }) {
                                 <path d="M18 6 6 18M6 6l12 12" />
                               </svg>
                             </button>
-                            <p className="text-xl font-medium text-slate-900">
+                            <p className="text-[2rem] font-medium text-slate-900">
                               {classworkTypeLabelMap[classworkCreateType] || "Classwork"}
                             </p>
                           </div>
                           <button
                             type="submit"
-                            disabled={publishingClasswork || !classworkDraft.title.trim() || !classworkDraft.due_at}
-                            className={`rounded-full px-5 py-2 text-sm font-semibold ${
-                              publishingClasswork || !classworkDraft.title.trim() || !classworkDraft.due_at
+                            disabled={
+                              publishingClasswork ||
+                              !classworkDraft.title.trim() ||
+                              (["assignment", "quiz_assignment"].includes(classworkCreateType) && !classworkDraft.due_at)
+                            }
+                            className={`rounded-full px-6 py-2.5 text-base font-semibold ${
+                              publishingClasswork ||
+                              !classworkDraft.title.trim() ||
+                              (["assignment", "quiz_assignment"].includes(classworkCreateType) && !classworkDraft.due_at)
                                 ? "cursor-not-allowed bg-slate-300 text-slate-600"
                                 : "bg-blue-600 text-white hover:bg-blue-700"
                             }`}
                           >
-                            {publishingClasswork ? "Publishing..." : "Assign"}
+                            {publishingClasswork ? "Publishing..." : classworkCreateType === "question" ? "Ask" : classworkCreateType === "material" ? "Post" : "Assign"}
                           </button>
                         </div>
 
                         <div className="grid grid-cols-1 lg:grid-cols-12">
-                          <div className="border-r border-slate-200 bg-slate-50 p-4 lg:col-span-9">
-                            <div className="rounded-xl border border-slate-200 bg-white p-4">
-                              <input
-                                value={classworkDraft.title}
-                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, title: e.target.value }))}
-                                placeholder="Title *"
-                                className="w-full border-b border-red-300 px-1 py-2 text-xl text-slate-900 outline-none placeholder:text-slate-400"
-                                required
-                              />
-                              <p className="mt-1 text-xs text-red-500">*Required</p>
+                          {classworkCreateType === "quiz_assignment" ? (
+                            <>
+                              <div className="border-r border-slate-200 bg-slate-50 p-4 lg:col-span-9">
+                                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                  <input
+                                    value={classworkDraft.title}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, title: e.target.value }))}
+                                    placeholder="Title *"
+                                    className="w-full border-b border-red-300 bg-slate-50 px-3 py-2 text-2xl text-slate-900 outline-none placeholder:text-slate-500"
+                                    required
+                                  />
+                                  <p className="mt-1 text-xs text-red-500">*Required</p>
 
-                              <textarea
-                                rows={8}
-                                value={classworkDraft.description}
-                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, description: e.target.value }))}
-                                placeholder="Instructions (optional)"
-                                className="mt-4 w-full resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
-                              />
+                                  <textarea
+                                    rows={7}
+                                    value={classworkDraft.description}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, description: e.target.value }))}
+                                    placeholder="Instructions (optional)"
+                                    className="mt-4 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"
+                                  />
 
-                              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                <p className="text-sm font-medium text-slate-800">Attach</p>
-                                <div className="mt-3 flex flex-wrap items-center gap-3">
-                                  {["Drive", "YouTube", "Create", "Upload", "Link", "NotebookLM", "Gem"].map((item) => (
-                                    <button
-                                      key={item}
-                                      type="button"
-                                      className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
-                                    >
-                                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-100 text-[10px]">+</span>
-                                      {item}
-                                    </button>
-                                  ))}
+                                  <div className="mt-2 flex items-center gap-2 border-b border-slate-200 pb-3 text-slate-600">
+                                    <button type="button" className="rounded px-2 py-1 text-xl font-semibold hover:bg-slate-100">B</button>
+                                    <button type="button" className="rounded px-2 py-1 text-xl italic hover:bg-slate-100">I</button>
+                                    <button type="button" className="rounded px-2 py-1 text-xl underline hover:bg-slate-100">U</button>
+                                    <button type="button" className="rounded px-2 py-1 text-sm hover:bg-slate-100">List</button>
+                                    <button type="button" className="rounded px-2 py-1 text-sm hover:bg-slate-100">Strike</button>
+                                  </div>
+
+                                  <div className="mt-4 rounded-xl border border-slate-300 bg-white p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div>
+                                        <p className="text-3xl font-semibold leading-none text-slate-800 underline">Blank Quiz</p>
+                                        <p className="mt-1 text-sm text-slate-600">Google Forms</p>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                        <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                                          <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                            <path d="M14 2v6h6" />
+                                            <path d="M9 13h6M9 17h6M9 9h1" />
+                                          </svg>
+                                        </span>
+                                        <button type="button" className="text-slate-500 hover:text-slate-700">
+                                          <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M18 6 6 18M6 6l12 12" />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <p className="mt-4 text-sm text-slate-700">
+                                    Classroom can import grades for assignments. Grade importing automatically limits each form to 1 response per user.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setQuizGradeImporting((prev) => !prev)}
+                                    className="mt-3 inline-flex items-center gap-3"
+                                  >
+                                    <span className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${quizGradeImporting ? "bg-blue-600" : "bg-slate-300"}`}>
+                                      <span className={`h-5 w-5 rounded-full bg-white transition ${quizGradeImporting ? "translate-x-5" : "translate-x-1"}`} />
+                                    </span>
+                                    <span className="text-sm font-medium text-slate-800">Grade importing</span>
+                                  </button>
+                                </div>
+
+                                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                                  <p className="text-xl font-semibold text-slate-900">Attach</p>
+                                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                                    {["Drive", "YouTube", "Create", "Upload", "Link", "NotebookLM", "Gem"].map((item) => (
+                                      <button
+                                        key={item}
+                                        type="button"
+                                        className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-300 bg-white text-xs text-slate-700 hover:bg-slate-100"
+                                        title={item}
+                                      >
+                                        +
+                                      </button>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </div>
 
-                          <aside className="space-y-3 bg-white p-4 lg:col-span-3">
-                            <div>
-                              <p className="text-sm text-slate-700">For</p>
-                              <div className="mt-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                                {selectedClassroom.title}
+                              <aside className="space-y-4 bg-white p-4 lg:col-span-3">
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">For</p>
+                                  <div className="mt-2 truncate rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-700">
+                                    {selectedClassroom.title}
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Assign to</p>
+                                  <div className="mt-2 rounded-full border border-slate-300 px-3 py-2.5 text-center text-sm text-blue-700">
+                                    All students
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Points</p>
+                                  <select
+                                    value={classworkDraft.points}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, points: e.target.value }))}
+                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
+                                  >
+                                    <option value="100">100</option>
+                                    <option value="50">50</option>
+                                    <option value="25">25</option>
+                                    <option value="10">10</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Due</p>
+                                  <input
+                                    type="datetime-local"
+                                    value={classworkDraft.due_at}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, due_at: e.target.value }))}
+                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
+                                    required
+                                  />
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Topic</p>
+                                  <input
+                                    value={classworkDraft.topic}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, topic: e.target.value }))}
+                                    placeholder="No topic"
+                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
+                                  />
+                                </div>
+                              </aside>
+                            </>
+                          ) : classworkCreateType === "question" ? (
+                            <>
+                              <div className="border-r border-slate-200 bg-slate-50 p-4 lg:col-span-9">
+                                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+                                    <div className="lg:col-span-8">
+                                      <label className="mb-1 block text-sm text-blue-700">Question*</label>
+                                      <input
+                                        value={classworkDraft.title}
+                                        onChange={(e) => setClassworkDraft((prev) => ({ ...prev, title: e.target.value }))}
+                                        className="w-full border-b border-blue-500 bg-slate-50 px-2 py-2 text-lg text-slate-900 outline-none"
+                                        required
+                                      />
+                                      <p className="mt-1 text-xs text-red-500">*Required</p>
+                                    </div>
+                                    <div className="lg:col-span-4">
+                                      <label className="mb-1 block text-sm text-slate-600">Question type</label>
+                                      <select
+                                        value={questionType}
+                                        onChange={(e) => setQuestionType(e.target.value)}
+                                        className="w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-sm"
+                                      >
+                                        <option value="short_answer">Short answer</option>
+                                        <option value="multiple_choice">Multiple choice</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <textarea
+                                    rows={7}
+                                    value={classworkDraft.description}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, description: e.target.value }))}
+                                    placeholder="Instructions (optional)"
+                                    className="mt-4 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"
+                                  />
+
+                                  <div className="mt-2 flex items-center gap-2 border-b border-slate-200 pb-3 text-slate-600">
+                                    <button type="button" className="rounded px-2 py-1 text-xl font-semibold hover:bg-slate-100">B</button>
+                                    <button type="button" className="rounded px-2 py-1 text-xl italic hover:bg-slate-100">I</button>
+                                    <button type="button" className="rounded px-2 py-1 text-xl underline hover:bg-slate-100">U</button>
+                                    <button type="button" className="rounded px-2 py-1 text-sm hover:bg-slate-100">List</button>
+                                    <button type="button" className="rounded px-2 py-1 text-sm hover:bg-slate-100">Strike</button>
+                                  </div>
+                                </div>
+
+                                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                                  <p className="text-xl font-semibold text-slate-900">Attach</p>
+                                  <div className="mt-4 flex flex-wrap items-end gap-6">
+                                    {["Drive", "YouTube", "Create", "Upload", "Link"].map((item) => (
+                                      <button key={item} type="button" className="flex flex-col items-center gap-2 text-slate-700">
+                                        <span className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-slate-300 bg-white text-lg">+</span>
+                                        <span className="text-sm">{item}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                            <div>
-                              <p className="text-sm text-slate-700">Assign to</p>
-                              <div className="mt-1 rounded-full border border-slate-300 px-3 py-2 text-center text-sm text-blue-700">
-                                All students
+
+                              <aside className="space-y-4 bg-white p-4 lg:col-span-3">
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">For</p>
+                                  <div className="mt-2 truncate rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-700">
+                                    {selectedClassroom.title}
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Assign to</p>
+                                  <div className="mt-2 rounded-full border border-slate-300 px-3 py-2.5 text-center text-sm text-blue-700">
+                                    All students
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Points</p>
+                                  <select
+                                    value={classworkDraft.points}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, points: e.target.value }))}
+                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
+                                  >
+                                    <option value="100">100</option>
+                                    <option value="50">50</option>
+                                    <option value="25">25</option>
+                                    <option value="10">10</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Due</p>
+                                  <input
+                                    type="datetime-local"
+                                    value={classworkDraft.due_at}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, due_at: e.target.value }))}
+                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Topic</p>
+                                  <input
+                                    value={classworkDraft.topic}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, topic: e.target.value }))}
+                                    placeholder="No topic"
+                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
+                                  />
+                                </div>
+                                <label className="flex items-center gap-3 pt-2 text-sm text-slate-800">
+                                  <input
+                                    type="checkbox"
+                                    checked={allowStudentReplies}
+                                    onChange={(e) => setAllowStudentReplies(e.target.checked)}
+                                    className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                                  />
+                                  Students can reply to each other
+                                </label>
+                                <label className="flex items-center gap-3 text-sm text-slate-800">
+                                  <input
+                                    type="checkbox"
+                                    checked={allowStudentEditAnswer}
+                                    onChange={(e) => setAllowStudentEditAnswer(e.target.checked)}
+                                    className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                                  />
+                                  Students can edit answer
+                                </label>
+                              </aside>
+                            </>
+                          ) : classworkCreateType === "material" ? (
+                            <>
+                              <div className="border-r border-slate-200 bg-slate-50 p-4 lg:col-span-9">
+                                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                  <input
+                                    value={classworkDraft.title}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, title: e.target.value }))}
+                                    placeholder="Title *"
+                                    className="w-full border-b border-red-300 bg-slate-50 px-3 py-2 text-2xl text-slate-900 outline-none placeholder:text-slate-500"
+                                    required
+                                  />
+                                  <p className="mt-1 text-xs text-red-500">*Required</p>
+
+                                  <textarea
+                                    rows={7}
+                                    value={classworkDraft.description}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, description: e.target.value }))}
+                                    placeholder="Description (optional)"
+                                    className="mt-4 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm"
+                                  />
+
+                                  <div className="mt-2 flex items-center gap-2 border-b border-slate-200 pb-3 text-slate-600">
+                                    <button type="button" className="rounded px-2 py-1 text-xl font-semibold hover:bg-slate-100">B</button>
+                                    <button type="button" className="rounded px-2 py-1 text-xl italic hover:bg-slate-100">I</button>
+                                    <button type="button" className="rounded px-2 py-1 text-xl underline hover:bg-slate-100">U</button>
+                                    <button type="button" className="rounded px-2 py-1 text-sm hover:bg-slate-100">List</button>
+                                    <button type="button" className="rounded px-2 py-1 text-sm hover:bg-slate-100">Strike</button>
+                                  </div>
+                                </div>
+
+                                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                                  <p className="text-xl font-semibold text-slate-900">Attach</p>
+                                  <div className="mt-4 flex flex-wrap items-end gap-6">
+                                    {["Drive", "YouTube", "Create", "Upload", "Link", "NotebookLM", "Gem"].map((item) => (
+                                      <button key={item} type="button" className="flex flex-col items-center gap-2 text-slate-700">
+                                        <span className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-slate-300 bg-white text-lg">+</span>
+                                        <span className="text-sm">{item}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                            <div>
-                              <p className="text-sm text-slate-700">Points</p>
-                              <select
-                                value={classworkDraft.points}
-                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, points: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
-                              >
-                                <option value="100">100</option>
-                                <option value="50">50</option>
-                                <option value="25">25</option>
-                                <option value="10">10</option>
-                              </select>
-                            </div>
-                            <div>
-                              <p className="text-sm text-slate-700">Due</p>
-                              <input
-                                type="datetime-local"
-                                value={classworkDraft.due_at}
-                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, due_at: e.target.value }))}
-                                className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <p className="text-sm text-slate-700">Topic</p>
-                              <input
-                                value={classworkDraft.topic}
-                                onChange={(e) => setClassworkDraft((prev) => ({ ...prev, topic: e.target.value }))}
-                                placeholder="No topic"
-                                className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
-                              />
-                            </div>
-                          </aside>
+
+                              <aside className="space-y-4 bg-white p-4 lg:col-span-3">
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">For</p>
+                                  <div className="mt-2 truncate rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-700">
+                                    {selectedClassroom.title}
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Assign to</p>
+                                  <div className="mt-2 rounded-full border border-slate-300 px-3 py-2.5 text-center text-sm text-blue-700">
+                                    All students
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-base font-medium text-slate-800">Topic</p>
+                                  <input
+                                    value={classworkDraft.topic}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, topic: e.target.value }))}
+                                    placeholder="No topic"
+                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-sm"
+                                  />
+                                </div>
+                              </aside>
+                            </>
+                          ) : (
+                            <>
+                              <div className="border-r border-slate-200 bg-slate-50 p-4 lg:col-span-9">
+                                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                  <input
+                                    value={classworkDraft.title}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, title: e.target.value }))}
+                                    placeholder="Title *"
+                                    className="w-full border-b border-red-300 px-1 py-2 text-xl text-slate-900 outline-none placeholder:text-slate-400"
+                                    required
+                                  />
+                                  <p className="mt-1 text-xs text-red-500">*Required</p>
+
+                                  <textarea
+                                    rows={8}
+                                    value={classworkDraft.description}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, description: e.target.value }))}
+                                    placeholder="Instructions (optional)"
+                                    className="mt-4 w-full resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+                                  />
+
+                                  <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                    <p className="text-sm font-medium text-slate-800">Attach</p>
+                                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                                      {["Drive", "YouTube", "Create", "Upload", "Link", "NotebookLM", "Gem"].map((item) => (
+                                        <button
+                                          key={item}
+                                          type="button"
+                                          className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                                        >
+                                          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-slate-100 text-[10px]">+</span>
+                                          {item}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <aside className="space-y-3 bg-white p-4 lg:col-span-3">
+                                <div>
+                                  <p className="text-sm text-slate-700">For</p>
+                                  <div className="mt-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                    {selectedClassroom.title}
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-sm text-slate-700">Assign to</p>
+                                  <div className="mt-1 rounded-full border border-slate-300 px-3 py-2 text-center text-sm text-blue-700">
+                                    All students
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-sm text-slate-700">Points</p>
+                                  <select
+                                    value={classworkDraft.points}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, points: e.target.value }))}
+                                    className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                                  >
+                                    <option value="100">100</option>
+                                    <option value="50">50</option>
+                                    <option value="25">25</option>
+                                    <option value="10">10</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <p className="text-sm text-slate-700">Due</p>
+                                  <input
+                                    type="datetime-local"
+                                    value={classworkDraft.due_at}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, due_at: e.target.value }))}
+                                    className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                                    required
+                                  />
+                                </div>
+                                <div>
+                                  <p className="text-sm text-slate-700">Topic</p>
+                                  <input
+                                    value={classworkDraft.topic}
+                                    onChange={(e) => setClassworkDraft((prev) => ({ ...prev, topic: e.target.value }))}
+                                    placeholder="No topic"
+                                    className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
+                                  />
+                                </div>
+                              </aside>
+                            </>
+                          )}
                         </div>
                       </form>
                     ) : (
@@ -3093,165 +3596,7 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "calendar") {
-      const monthStart = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
-      const monthLabel = monthStart.toLocaleString("en-US", { month: "long", year: "numeric" });
-      const daysInMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0).getDate();
-      const startDay = monthStart.getDay();
-      const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-      const eventsForDate = (isoDate) => calendarEvents.filter((event) => event.date === isoDate);
-      const selectedDayEvents = eventsForDate(selectedDate);
-
-      const cells = [];
-      for (let i = 0; i < startDay; i += 1) cells.push({ key: `e-${i}`, isoDate: null, day: null, events: [] });
-      for (let d = 1; d <= daysInMonth; d += 1) {
-        const isoDate = `${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-        cells.push({ key: `d-${d}`, isoDate, day: d, events: eventsForDate(isoDate) });
-      }
-
-      return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          <div className="space-y-4">
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-              <h3 className="text-lg font-semibold text-slate-800">Faculty Calendar</h3>
-              <p className="text-sm text-slate-500 mt-1">Plan your day using month view and day planner.</p>
-
-              {eventMessage && <div className="mt-4 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">{eventMessage}</div>}
-              {eventError && <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{eventError}</div>}
-
-              <form className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4" onSubmit={handleEventSubmit}>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Event Title</label>
-                  <input name="title" value={eventForm.title} onChange={handleEventChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Date</label>
-                  <input type="date" name="date" value={eventForm.date} onChange={handleEventChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" required />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Description</label>
-                  <textarea name="description" rows={3} value={eventForm.description} onChange={handleEventChange} className="w-full rounded-lg border border-slate-300 px-3 py-2.5" />
-                </div>
-                <div className="md:col-span-2 flex gap-2">
-                  <button type="submit" disabled={savingEvent} className={`px-4 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 ${savingEvent ? "opacity-60 cursor-not-allowed" : ""}`}>
-                    {savingEvent ? "Saving..." : editingEventId ? "Update Event" : "Add Event"}
-                  </button>
-                  {editingEventId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingEventId(null);
-                        setEventForm({ title: "", date: selectedDate, description: "" });
-                      }}
-                      className="px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
-                    >
-                      Cancel Edit
-                    </button>
-                  )}
-                </div>
-              </form>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <h4 className="text-base font-semibold text-slate-800">Day Planner</h4>
-              <p className="text-xs text-slate-500 mt-1">Selected date: {selectedDate}</p>
-              {selectedDayEvents.length === 0 ? (
-                <p className="text-sm text-slate-500 mt-4">No events for this day.</p>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {selectedDayEvents.map((event) => (
-                    <div key={event.id} className="rounded-lg border border-slate-200 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-slate-800">{event.title}</p>
-                        {event.created_by === currentUserId && (
-                          <div className="flex gap-1">
-                            <button onClick={() => handleEditEvent(event)} className="px-2 py-1 text-xs rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200">
-                              Edit
-                            </button>
-                            <button onClick={() => handleDeleteEvent(event.id)} className="px-2 py-1 text-xs rounded-md bg-red-100 text-red-700 hover:bg-red-200">
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Created by {event.creator_name} ({event.creator_role})
-                      </p>
-                      {event.description && <p className="text-sm text-slate-600 mt-2">{event.description}</p>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-base font-semibold text-slate-800">{monthLabel}</h4>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))}
-                  className="px-2.5 py-1.5 text-sm rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50"
-                >
-                  Prev
-                </button>
-                <button
-                  onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))}
-                  className="px-2.5 py-1.5 text-sm rounded-md border border-slate-300 text-slate-600 hover:bg-slate-50"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-
-            {loadingCalendarEvents ? (
-              <p className="text-sm text-slate-500">Loading events...</p>
-            ) : (
-              <>
-                <div className="grid grid-cols-7 gap-2 mb-2">
-                  {weekDays.map((w) => (
-                    <div key={w} className="text-xs font-semibold text-slate-500 text-center py-2">
-                      {w}
-                    </div>
-                  ))}
-                </div>
-                <div className="grid grid-cols-7 gap-2">
-                  {cells.map((cell) => (
-                    <button
-                      type="button"
-                      key={cell.key}
-                      disabled={!cell.isoDate}
-                      onClick={() => {
-                        if (cell.isoDate) {
-                          setSelectedDate(cell.isoDate);
-                          if (!editingEventId) setEventForm((prev) => ({ ...prev, date: cell.isoDate }));
-                        }
-                      }}
-                      className={`min-h-20 rounded-lg border p-2 text-left ${
-                        !cell.isoDate
-                          ? "border-transparent bg-transparent cursor-default"
-                          : cell.isoDate === selectedDate
-                            ? "border-blue-400 bg-blue-50"
-                            : "border-slate-200 bg-white hover:bg-slate-50"
-                      }`}
-                    >
-                      {cell.day && (
-                        <>
-                          <p className="text-xs font-semibold text-slate-700">{cell.day}</p>
-                          {cell.events.length > 0 && (
-                            <p className="text-[11px] text-blue-700 mt-1">{cell.events.length} event{cell.events.length > 1 ? "s" : ""}</p>
-                          )}
-                          {cell.events[0] && <p className="text-[11px] text-slate-600 mt-1 truncate">{cell.events[0].title}</p>}
-                        </>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      );
+      return <CalendarPage viewerRole="faculty" />;
     }
 
     if (activePage === "teachers") {
@@ -3469,208 +3814,85 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "messages") {
-      return (
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-slate-800">Contact Admin</h3>
-            <p className="text-sm text-slate-500 mt-1">
-              Share doubts, operational issues, or support requests with the admin team.
-            </p>
-
-            <form onSubmit={submitQueryToAdmin} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <input
-                name="subject"
-                value={queryForm.subject}
-                onChange={handleQueryInput}
-                className="md:col-span-2 rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Subject"
-                required
-              />
-              <select
-                name="category"
-                value={queryForm.category}
-                onChange={handleQueryInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-              >
-                <option value="general">General</option>
-                <option value="academic">Academic</option>
-                <option value="technical">Technical</option>
-                <option value="administrative">Administrative</option>
-              </select>
-              <select
-                name="priority"
-                value={queryForm.priority}
-                onChange={handleQueryInput}
-                className="rounded-lg border border-slate-300 px-3 py-2.5"
-              >
-                <option value="low">Low Priority</option>
-                <option value="normal">Normal Priority</option>
-                <option value="high">High Priority</option>
-              </select>
-              <textarea
-                name="body"
-                rows={4}
-                value={queryForm.body}
-                onChange={handleQueryInput}
-                className="md:col-span-2 rounded-lg border border-slate-300 px-3 py-2.5"
-                placeholder="Write your query clearly..."
-                required
-              />
-              <div className="md:col-span-2">
-                <button type="submit" className="rounded-lg bg-blue-600 text-white hover:bg-blue-700 px-4 py-2.5">
-                  Submit Query
-                </button>
-              </div>
-            </form>
-
-            {queryMessage && (
-              <div className="mt-4 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
-                {queryMessage}
-              </div>
-            )}
-            {queryError && (
-              <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {queryError}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <div className="flex items-center justify-between gap-3">
-              <h4 className="text-base font-semibold text-slate-800">My Submitted Queries</h4>
-              <button
-                type="button"
-                onClick={loadMyQueries}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                Refresh
-              </button>
-            </div>
-
-            {loadingMyQueries ? (
-              <p className="text-sm text-slate-500 mt-4">Loading your queries...</p>
-            ) : myQueries.length === 0 ? (
-              <p className="text-sm text-slate-500 mt-4">No queries submitted yet.</p>
-            ) : (
-              <div className="mt-4 space-y-3">
-                {myQueries.map((query) => (
-                  <div key={query.id} className="rounded-lg border border-slate-200 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-slate-800">{query.subject}</p>
-                      <span className="text-xs rounded-full px-2.5 py-1 bg-slate-100 text-slate-700 border border-slate-300">
-                        {query.status.replace("_", " ")}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {query.category} | {query.priority} priority | {new Date(query.created_at).toLocaleString()}
-                    </p>
-                    <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{query.body}</p>
-                    {query.admin_note && (
-                      <p className="text-sm text-slate-700 mt-2 bg-slate-50 border border-slate-200 rounded-md p-2">
-                        <span className="font-semibold">Admin Note:</span> {query.admin_note}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h4 className="text-base font-semibold text-slate-800">Admin Announcements</h4>
-                <p className="text-sm text-slate-500 mt-1">
-                  Announcements are centralized in Notifications to avoid duplicate views.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActivePage("notifications")}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                Open Notifications
-              </button>
-            </div>
-          </div>
-        </div>
-      );
+      return <Queries />;
     }
 
     if (activePage === "notifications") {
       return (
-        <div className="space-y-4">
-          <AnnouncementCarousel
-            messages={inboxMessages}
-            loading={loadingInboxMessages}
-            error={inboxError}
-            title="Faculty Notifications"
-            subtitle="All admin announcements sent to faculty and to all users."
-            emptyMessage="No notifications yet."
-            onRefresh={loadInboxMessages}
-          />
-
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <h4 className="text-base font-semibold text-slate-800">All Announcement Notifications</h4>
-            {inboxError ? (
-              <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {inboxError}
+        <div className="w-full space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-semibold tracking-tight text-slate-900">Notifications</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Real-time updates from admin announcements and teacher messages.
+                </p>
               </div>
-            ) : loadingInboxMessages ? (
-              <p className="text-sm text-slate-500 mt-4">Loading notifications...</p>
-            ) : inboxMessages.length === 0 ? (
-              <p className="text-sm text-slate-500 mt-4">No notifications available.</p>
-            ) : (
-              <div className="mt-4 space-y-3">
-                {inboxMessages.map((msg) => (
-                  <div key={msg.id} className="rounded-lg border border-slate-200 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-slate-800">{msg.subject}</p>
-                      <span className="text-xs rounded-full px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200">
-                        {msg.recipient_role}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">
-                      By {msg.sender_name} | {new Date(msg.created_at).toLocaleString()}
-                    </p>
-                    <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{msg.body}</p>
-                  </div>
-                ))}
+              <div className="flex items-center gap-2">
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
+                  Total: {facultyNotificationFeedItems.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={refreshFacultyNotifications}
+                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Refresh
+                </button>
               </div>
-            )}
+            </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <div className="flex items-center justify-between gap-3">
-              <h4 className="text-base font-semibold text-slate-800">Teacher Messages</h4>
-              <button
-                type="button"
-                onClick={loadFacultyPeerInbox}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-              >
-                Refresh
-              </button>
-            </div>
-
-            {loadingFacultyInbox ? (
-              <p className="text-sm text-slate-500 mt-4">Loading teacher messages...</p>
-            ) : facultyInbox.length === 0 ? (
-              <p className="text-sm text-slate-500 mt-4">No teacher messages yet.</p>
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            {loadingInboxMessages || loadingFacultyInbox ? (
+              <p className="px-5 py-6 text-sm text-slate-500">Loading notifications...</p>
+            ) : inboxError ? (
+              <div className="m-5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {inboxError}
+              </div>
+            ) : facultyNotificationFeedItems.length === 0 ? (
+              <div className="px-5 py-8 text-sm text-slate-500">No notifications yet.</div>
             ) : (
-              <div className="mt-4 space-y-3">
-                {facultyInbox.map((msg) => (
-                  <div key={msg.id} className="rounded-lg border border-slate-200 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-slate-800">{msg.subject}</p>
-                      <span className="text-xs rounded-full px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        teacher
-                      </span>
+              <div className="divide-y divide-slate-200">
+                {facultyNotificationFeedItems.map((item, index) => (
+                  <article key={item.id} className="flex items-start gap-4 px-5 py-4 hover:bg-slate-50/70">
+                    <div
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${
+                        notificationAvatarPalette[index % notificationAvatarPalette.length]
+                      } text-sm font-semibold text-white`}
+                    >
+                      {notificationInitialsFrom(item.actorName)}
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">
-                      From {msg.sender_name} ({msg.sender_email}) | {new Date(msg.created_at).toLocaleString()}
-                    </p>
-                    <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{msg.body}</p>
-                  </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-lg font-semibold text-cyan-600">{item.actorName}</p>
+                          <p className="truncate text-sm text-slate-400">
+                            {item.subject ? `${item.subject} · ` : ""}
+                            {item.actionText}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-xs font-medium italic text-slate-400">
+                          {notificationTimeAgo(item.createdAt)}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                            item.kind === "teacher_message"
+                              ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border border-blue-200 bg-blue-50 text-blue-700"
+                          }`}
+                        >
+                          {item.kind === "teacher_message" ? "teacher message" : item.roleTag}
+                        </span>
+                        {item.senderEmail && (
+                          <span className="truncate text-xs text-slate-400">{item.senderEmail}</span>
+                        )}
+                      </div>
+                      <p className="mt-2 line-clamp-2 text-base leading-6 text-slate-700">{item.bodyText}</p>
+                    </div>
+                  </article>
                 ))}
               </div>
             )}

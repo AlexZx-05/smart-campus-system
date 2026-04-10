@@ -9,6 +9,18 @@ const API = axios.create({
   },
 });
 
+let hasHandledSessionExpiry = false;
+
+const clearSessionAndRedirect = () => {
+  localStorage.removeItem("token");
+  localStorage.removeItem("role");
+  if (hasHandledSessionExpiry) return;
+  hasHandledSessionExpiry = true;
+  if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+    window.location.replace("/login");
+  }
+};
+
 // Automatically attach token
 API.interceptors.request.use(
   (config) => {
@@ -28,9 +40,17 @@ API.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error?.response?.status;
-    if (status === 401 || status === 422) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("role");
+    const message = String(error?.response?.data?.message || "").toLowerCase();
+    const hadAuthHeader = Boolean(error?.config?.headers?.Authorization);
+    const isJwt422 =
+      status === 422 &&
+      (message.includes("token") ||
+        message.includes("jwt") ||
+        message.includes("signature") ||
+        message.includes("expired"));
+
+    if ((status === 401 && hadAuthHeader) || isJwt422) {
+      clearSessionAndRedirect();
     }
     return Promise.reject(error);
   }

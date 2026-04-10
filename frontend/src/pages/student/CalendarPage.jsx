@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import EventService from "../../services/EventService";
 
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const HOLIDAY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const getIsoDate = (dateObj) =>
   `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}-${String(dateObj.getDate()).padStart(
@@ -15,7 +16,7 @@ const formatDateLabel = (isoDate) => {
   return parsed.toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric" });
 };
 
-function CalendarPage() {
+function CalendarPage({ viewerRole = "student" }) {
   const today = useMemo(() => new Date(), []);
   const todayIso = getIsoDate(today);
 
@@ -28,6 +29,7 @@ function CalendarPage() {
 
   const [loadingCalendar, setLoadingCalendar] = useState(true);
   const [loadingSidebar, setLoadingSidebar] = useState(true);
+  const [loadingHolidays, setLoadingHolidays] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [error, setError] = useState("");
@@ -56,30 +58,11 @@ function CalendarPage() {
     }
   };
 
-  const loadAllEvents = async () => {
+  const loadSidebarEvents = async () => {
     setLoadingSidebar(true);
     try {
-      const baseYear = today.getFullYear();
-      const [eventsData, holidaysData] = await Promise.allSettled([
-        EventService.getEvents(),
-        EventService.getIndiaHolidays({ start_year: baseYear, end_year: baseYear + 1 }),
-      ]);
-
-      if (eventsData.status === "fulfilled") {
-        setAllEvents(Array.isArray(eventsData.value) ? eventsData.value : []);
-      } else {
-        setAllEvents([]);
-      }
-
-      if (holidaysData.status === "fulfilled") {
-        setGovernmentHolidays(Array.isArray(holidaysData.value) ? holidaysData.value : []);
-      } else {
-        setGovernmentHolidays([]);
-      }
-
-      if (eventsData.status !== "fulfilled" && holidaysData.status !== "fulfilled") {
-        throw new Error("No event response");
-      }
+      const data = await EventService.getEvents();
+      setAllEvents(Array.isArray(data) ? data : []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load upcoming holidays.");
     } finally {
@@ -87,12 +70,59 @@ function CalendarPage() {
     }
   };
 
+  const loadHolidays = async ({ force = false } = {}) => {
+    setLoadingHolidays(true);
+    const baseYear = today.getFullYear();
+    const cacheKey = `india_holidays_${baseYear}_${baseYear + 1}`;
+    let hasUsableCache = false;
+
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        const cachedEvents = Array.isArray(cached?.events) ? cached.events : [];
+        const isFresh = Number(cached?.saved_at) > 0 && Date.now() - Number(cached.saved_at) < HOLIDAY_CACHE_TTL_MS;
+        if (cachedEvents.length > 0) {
+          setGovernmentHolidays(cachedEvents);
+          hasUsableCache = true;
+          if (isFresh && !force) return;
+        }
+      }
+    } catch (_) {
+      // Ignore cache parse failures and continue with network fetch.
+    }
+
+    try {
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Holiday service timeout")), 4000)
+      );
+      const data = await Promise.race([
+        EventService.getIndiaHolidays({ start_year: baseYear, end_year: baseYear + 1 }),
+        timeoutPromise,
+      ]);
+      const normalized = Array.isArray(data) ? data : [];
+      setGovernmentHolidays(normalized);
+      localStorage.setItem(cacheKey, JSON.stringify({ saved_at: Date.now(), events: normalized }));
+    } catch (err) {
+      if (!hasUsableCache) {
+        setError(err.response?.data?.message || "Holiday service is slow right now. Showing calendar events only.");
+      }
+    } finally {
+      setLoadingHolidays(false);
+    }
+  };
+
+  const refreshCalendarData = async () => {
+    await Promise.all([loadMonthEvents(), loadSidebarEvents()]);
+  };
+
   useEffect(() => {
     loadMonthEvents();
   }, [calendarMonth, calendarYear]);
 
   useEffect(() => {
-    loadAllEvents();
+    loadSidebarEvents();
+    loadHolidays();
   }, []);
 
   useEffect(() => {
@@ -251,7 +281,7 @@ function CalendarPage() {
       }
       setShowEventModal(false);
       setEditingEventId(null);
-      await Promise.all([loadMonthEvents(), loadAllEvents()]);
+      await Promise.all([loadMonthEvents(), loadSidebarEvents()]);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to save event.");
     } finally {
@@ -268,11 +298,13 @@ function CalendarPage() {
         setEditingEventId(null);
         setShowEventModal(false);
       }
-      await Promise.all([loadMonthEvents(), loadAllEvents()]);
+      await Promise.all([loadMonthEvents(), loadSidebarEvents()]);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to delete event.");
     }
   };
+
+  const normalizedViewerRole = (viewerRole || "").toLowerCase();
 
   return (
     <div className="space-y-4">
@@ -393,7 +425,7 @@ function CalendarPage() {
                 <h4 className="text-base font-semibold text-slate-900">Upcoming Holidays</h4>
                 <button
                   type="button"
-                  onClick={loadAllEvents}
+                  onClick={refreshCalendarData}
                   className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
                 >
                   Refresh
@@ -403,7 +435,9 @@ function CalendarPage() {
                 {loadingSidebar ? (
                   <p className="text-sm text-slate-500">Loading upcoming holidays...</p>
                 ) : upcomingHolidays.length === 0 ? (
-                  <p className="text-sm text-slate-500">No upcoming holidays available.</p>
+                  <p className="text-sm text-slate-500">
+                    {loadingHolidays ? "Loading government holidays..." : "No upcoming holidays available."}
+                  </p>
                 ) : (
                   <div className="space-y-2.5">
                     {upcomingHolidays.map((event) => (
@@ -468,7 +502,7 @@ function CalendarPage() {
                           By {event.creator_name} ({event.creator_role})
                         </p>
                         {event.description && <p className="mt-2 text-sm text-slate-700">{event.description}</p>}
-                        {event.creator_role === "student" && event.audience === "private" && (
+                        {(event.creator_role || "").toLowerCase() === normalizedViewerRole && event.audience === "private" && (
                           <div className="mt-3 flex gap-2">
                             <button
                               type="button"

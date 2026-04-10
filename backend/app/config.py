@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -36,6 +37,8 @@ class Config:
     SQLALCHEMY_DATABASE_URI = 'sqlite:///smartcampus.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JWT_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", 'super-secret-key')
+    # Extend token lifetime for smoother local development; override via env when needed.
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES_HOURS", "12")))
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
     # Comma-separated allowlist of admin emails (set by developer/deployment owner).
     # Example env: ADMIN_ALLOWED_EMAILS=admin1@campus.edu,admin2@campus.edu
