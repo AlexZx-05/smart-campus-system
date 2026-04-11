@@ -558,14 +558,22 @@ def _serialize_submission_for_faculty(submission):
 def _serialize_course_enrollment(row):
     student = User.query.get(row.student_id)
     faculty = User.query.get(row.faculty_id)
+    student_image_url = None
+    faculty_image_url = None
+    if student and student.profile_image:
+        student_image_url = f"{request.host_url.rstrip('/')}{student.profile_image}"
+    if faculty and faculty.profile_image:
+        faculty_image_url = f"{request.host_url.rstrip('/')}{faculty.profile_image}"
     return {
         "id": row.id,
         "student_id": row.student_id,
         "student_name": student.name if student else None,
         "student_email": student.email if student else None,
+        "student_profile_image_url": student_image_url,
         "faculty_id": row.faculty_id,
         "faculty_name": faculty.name if faculty else None,
         "faculty_email": faculty.email if faculty else None,
+        "faculty_profile_image_url": faculty_image_url,
         "subject": row.subject,
         "semester": row.semester,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -575,14 +583,18 @@ def _serialize_course_enrollment(row):
 def _serialize_classroom(row):
     faculty = User.query.get(row.faculty_id)
     cover_image_url = None
+    faculty_image_url = None
     if row.cover_image_path:
         cover_image_url = f"{request.host_url.rstrip('/')}{row.cover_image_path}"
+    if faculty and faculty.profile_image:
+        faculty_image_url = f"{request.host_url.rstrip('/')}{faculty.profile_image}"
 
     return {
         "id": row.id,
         "faculty_id": row.faculty_id,
         "faculty_name": faculty.name if faculty else "Faculty",
         "faculty_email": faculty.email if faculty else None,
+        "faculty_profile_image_url": faculty_image_url,
         "title": row.title,
         "subject": row.subject,
         "semester": row.semester,
@@ -1552,6 +1564,34 @@ def upload_faculty_profile_photo():
 
     return jsonify({
         "message": "Profile photo uploaded successfully",
+        "profile": _serialize_faculty_profile(user)
+    }), 200
+
+
+@preference_bp.route("/api/faculty/profile/photo", methods=["DELETE"])
+@jwt_required()
+def delete_faculty_profile_photo():
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    if not user.profile_image:
+        return jsonify({"message": "No profile photo to remove", "profile": _serialize_faculty_profile(user)}), 200
+
+    old_path = user.profile_image
+    user.profile_image = None
+    db.session.commit()
+
+    try:
+        filename = os.path.basename(old_path)
+        file_path = os.path.join(current_app.config["UPLOAD_FOLDER"], filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+    except OSError:
+        pass
+
+    return jsonify({
+        "message": "Profile photo removed successfully",
         "profile": _serialize_faculty_profile(user)
     }), 200
 

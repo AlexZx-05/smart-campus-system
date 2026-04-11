@@ -19,6 +19,11 @@ const FacultyService = {
     });
     return response.data;
   },
+
+  removeProfilePhoto: async () => {
+    const response = await API.delete("/faculty/profile/photo");
+    return response.data;
+  },
 };
 
 export default FacultyService;

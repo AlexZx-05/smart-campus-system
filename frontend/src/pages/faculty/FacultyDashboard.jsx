@@ -16,6 +16,7 @@ const notificationAvatarPalette = [
   "from-violet-400 to-indigo-600",
 ];
 const LAST_SELECTED_TEACHER_KEY = "faculty_last_selected_teacher_id";
+const TEACHER_THREAD_LAST_SEEN_KEY = "faculty_teacher_thread_last_seen";
 
 const notificationInitialsFrom = (name = "") =>
   name
@@ -57,6 +58,8 @@ function FacultyDashboard({ onLogout }) {
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [removingPhoto, setRemovingPhoto] = useState(false);
+  const [showFacultyPhotoPopover, setShowFacultyPhotoPopover] = useState(false);
 
   const [preferenceForm, setPreferenceForm] = useState({
     subject: "",
@@ -108,6 +111,8 @@ function FacultyDashboard({ onLogout }) {
   const [loadingTeacherDirectory, setLoadingTeacherDirectory] = useState(false);
   const [teacherDirectoryError, setTeacherDirectoryError] = useState("");
   const [teacherSearch, setTeacherSearch] = useState("");
+  const [teacherListFilter, setTeacherListFilter] = useState("all");
+  const [notificationTypeFilter, setNotificationTypeFilter] = useState("all");
   const [facultyMessageForm, setFacultyMessageForm] = useState({
     recipient_id: "",
     subject: "",
@@ -120,6 +125,15 @@ function FacultyDashboard({ onLogout }) {
   const [facultyMessageFeedback, setFacultyMessageFeedback] = useState("");
   const [facultyMessageError, setFacultyMessageError] = useState("");
   const [facultyInbox, setFacultyInbox] = useState([]);
+  const [teacherThreadLastSeenById, setTeacherThreadLastSeenById] = useState(() => {
+    try {
+      const raw = localStorage.getItem(TEACHER_THREAD_LAST_SEEN_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  });
   const [loadingFacultyInbox, setLoadingFacultyInbox] = useState(false);
   const [facultyConflicts, setFacultyConflicts] = useState([]);
   const [loadingFacultyConflicts, setLoadingFacultyConflicts] = useState(false);
@@ -145,6 +159,8 @@ function FacultyDashboard({ onLogout }) {
   const [assignmentError, setAssignmentError] = useState("");
   const [submittingAssignment, setSubmittingAssignment] = useState(false);
   const assignmentFileInputRef = useRef(null);
+  const facultyPhotoInputRef = useRef(null);
+  const facultyPhotoMenuRef = useRef(null);
   const [classroomForm, setClassroomForm] = useState({
     title: "",
     subject: "",
@@ -384,6 +400,42 @@ function FacultyDashboard({ onLogout }) {
     }
   };
 
+  const persistTeacherThreadSeenState = (nextState) => {
+    try {
+      localStorage.setItem(TEACHER_THREAD_LAST_SEEN_KEY, JSON.stringify(nextState));
+    } catch (_) {}
+  };
+
+  const markTeacherThreadAsSeen = (teacherId, inboxList = facultyInbox) => {
+    const idKey = String(teacherId || "");
+    if (!idKey) return;
+
+    const teacher = teacherDirectory.find((item) => String(item.id) === idKey);
+    if (!teacher) return;
+
+    const teacherEmail = (teacher.email || "").trim().toLowerCase();
+    const teacherName = (teacher.name || "").trim().toLowerCase();
+    const latestMessageMs = (inboxList || [])
+      .filter((msg) => {
+        const senderEmail = (msg.sender_email || "").trim().toLowerCase();
+        const senderName = (msg.sender_name || "").trim().toLowerCase();
+        return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
+      })
+      .reduce((maxMs, msg) => {
+        const ts = new Date(msg.created_at || 0).getTime();
+        return Number.isFinite(ts) && ts > maxMs ? ts : maxMs;
+      }, 0);
+
+    const nextSeenMs = latestMessageMs || Date.now();
+    setTeacherThreadLastSeenById((prev) => {
+      const prevValue = Number(prev?.[idKey] || 0);
+      if (prevValue >= nextSeenMs) return prev;
+      const next = { ...prev, [idKey]: nextSeenMs };
+      persistTeacherThreadSeenState(next);
+      return next;
+    });
+  };
+
   const refreshFacultyNotifications = async () => {
     await Promise.all([loadInboxMessages(), loadFacultyPeerInbox()]);
   };
@@ -519,10 +571,28 @@ function FacultyDashboard({ onLogout }) {
   }, [semesterFilter]);
 
   useEffect(() => {
+    if (activePage !== "profile") setShowFacultyPhotoPopover(false);
+  }, [activePage]);
+
+  useEffect(() => {
+    if (activePage !== "teachers") return undefined;
+    const timer = setInterval(() => {
+      loadFacultyPeerInbox();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [activePage]);
+
+  useEffect(() => {
     if (!facultyMessageFeedback) return undefined;
     const timer = setTimeout(() => setFacultyMessageFeedback(""), 1800);
     return () => clearTimeout(timer);
   }, [facultyMessageFeedback]);
+
+  useEffect(() => {
+    if (!profileMessage) return undefined;
+    const timer = setTimeout(() => setProfileMessage(""), 1000);
+    return () => clearTimeout(timer);
+  }, [profileMessage]);
 
   useEffect(() => {
     if (activePage !== "teachers") return;
@@ -573,6 +643,13 @@ function FacultyDashboard({ onLogout }) {
   }, [activePage, teacherDirectory, facultyInbox, facultyMessageForm.recipient_id]);
 
   useEffect(() => {
+    if (activePage !== "teachers") return;
+    if (!facultyMessageForm.recipient_id) return;
+    if (!teacherDirectory.length) return;
+    markTeacherThreadAsSeen(facultyMessageForm.recipient_id, facultyInbox);
+  }, [activePage, facultyMessageForm.recipient_id, facultyInbox, teacherDirectory]);
+
+  useEffect(() => {
     if (!showTeacherMenu) return;
     const onMouseDown = (event) => {
       if (!teacherMenuRef.current) return;
@@ -583,6 +660,18 @@ function FacultyDashboard({ onLogout }) {
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [showTeacherMenu]);
+
+  useEffect(() => {
+    if (!showFacultyPhotoPopover) return;
+    const onMouseDown = (event) => {
+      if (!facultyPhotoMenuRef.current) return;
+      if (!facultyPhotoMenuRef.current.contains(event.target)) {
+        setShowFacultyPhotoPopover(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [showFacultyPhotoPopover]);
 
   useEffect(() => {
     if (!conflictMessage) return undefined;
@@ -720,6 +809,7 @@ function FacultyDashboard({ onLogout }) {
   const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setShowFacultyPhotoPopover(false);
     setUploadingPhoto(true);
     setProfileMessage("");
     setProfileError("");
@@ -734,6 +824,23 @@ function FacultyDashboard({ onLogout }) {
     } finally {
       setUploadingPhoto(false);
       e.target.value = "";
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    if (!profile.profile_image_url || removingPhoto || uploadingPhoto) return;
+    setShowFacultyPhotoPopover(false);
+    setRemovingPhoto(true);
+    setProfileMessage("");
+    setProfileError("");
+    try {
+      const res = await FacultyService.removeProfilePhoto();
+      setProfileMessage(res.message || "Profile photo removed successfully.");
+      setProfile((prev) => ({ ...prev, profile_image_url: "" }));
+    } catch (err) {
+      setProfileError(err.response?.data?.message || "Failed to remove profile photo.");
+    } finally {
+      setRemovingPhoto(false);
     }
   };
 
@@ -758,6 +865,7 @@ function FacultyDashboard({ onLogout }) {
     setShowTeacherCompose(true);
     setShowTeacherProfilePanel(false);
     setShowTeacherMenu(false);
+    markTeacherThreadAsSeen(teacherId, facultyInbox);
     setFacultyMessageError("");
     setFacultyMessageFeedback("");
     setTimeout(() => {
@@ -1536,7 +1644,7 @@ function FacultyDashboard({ onLogout }) {
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Current Teaching Status</p>
               <p className="mt-2 text-base font-semibold text-slate-900">{activeMySlot ? "In Class" : "Available"}</p>
               <p className="mt-1 text-xs text-slate-500">
-                {activeMySlot ? `${activeMySlot.subject} • Room ${activeMySlot.room}` : "No active slot now"}
+                {activeMySlot ? `${activeMySlot.subject} | Room ${activeMySlot.room}` : "No active slot now"}
               </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1584,7 +1692,7 @@ function FacultyDashboard({ onLogout }) {
                       <div key={`${roomItem.room}-${slot.id || slot.subject}`} className="rounded-xl border border-blue-200 bg-blue-50 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="text-sm font-semibold text-blue-900">
-                            Room {roomItem.room} • {slot.start_time} - {slot.end_time}
+                            Room {roomItem.room} | {slot.start_time} - {slot.end_time}
                           </p>
                           <span className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
                             Live
@@ -1612,7 +1720,7 @@ function FacultyDashboard({ onLogout }) {
                     <>
                       <p className="mt-1 text-sm font-semibold text-slate-900">{activeMySlot.subject}</p>
                       <p className="text-xs text-slate-600">
-                        {activeMySlot.start_time} - {activeMySlot.end_time} • Room {activeMySlot.room}
+                        {activeMySlot.start_time} - {activeMySlot.end_time} | Room {activeMySlot.room}
                       </p>
                     </>
                   ) : (
@@ -1626,7 +1734,7 @@ function FacultyDashboard({ onLogout }) {
                     <>
                       <p className="mt-1 text-sm font-semibold text-slate-900">{nextMySlot.subject}</p>
                       <p className="text-xs text-slate-600">
-                        {nextMySlot.start_time} - {nextMySlot.end_time} • Room {nextMySlot.room}
+                        {nextMySlot.start_time} - {nextMySlot.end_time} | Room {nextMySlot.room}
                       </p>
                     </>
                   ) : (
@@ -1685,7 +1793,7 @@ function FacultyDashboard({ onLogout }) {
                 {nextCampusClasses.slice(0, 6).map((roomItem) => (
                   <div key={`${roomItem.room}-${roomItem.next_class.id || roomItem.next_class.start_time}`} className="rounded-xl border border-slate-200 p-3">
                     <p className="text-sm font-semibold text-slate-900">
-                      {roomItem.next_class.start_time} • Room {roomItem.room} • {roomItem.next_class.subject}
+                      {roomItem.next_class.start_time} | Room {roomItem.room} | {roomItem.next_class.subject}
                     </p>
                     <p className="text-xs text-slate-600 mt-1">
                       {roomItem.next_class.faculty_name || "Faculty"} | {roomItem.next_class.department || "-"} / {roomItem.next_class.year || "-"} / {roomItem.next_class.section || "-"}
@@ -1855,18 +1963,18 @@ function FacultyDashboard({ onLogout }) {
 
       return (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-5 py-4">
-            <h3 className="text-2xl font-semibold tracking-tight text-slate-900">Edit Profile</h3>
+          <div className="border-b border-slate-200 px-5 py-3.5">
+            <h3 className="text-xl font-semibold tracking-tight text-slate-900">Edit Profile</h3>
             <p className="mt-0.5 text-sm text-slate-500">Maintain your faculty information and professional details.</p>
           </div>
 
           {profileMessage && (
-            <div className="mx-6 mt-5 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <div className="mx-5 mt-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
               {profileMessage}
             </div>
           )}
           {profileError && (
-            <div className="mx-6 mt-5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <div className="mx-5 mt-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-2.5 text-sm text-rose-800">
               {profileError}
             </div>
           )}
@@ -1874,40 +1982,89 @@ function FacultyDashboard({ onLogout }) {
           {loadingProfile ? (
             <p className="px-6 py-6 text-sm text-slate-500">Loading profile...</p>
           ) : (
-            <div className="p-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="p-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
                 <div className="flex flex-wrap items-center gap-4">
-                  {profile.profile_image_url ? (
-                    <img
-                      src={profile.profile_image_url}
-                      alt="Faculty profile"
-                      className="h-20 w-20 rounded-2xl object-cover ring-1 ring-slate-200"
-                    />
-                  ) : (
-                    <div className="h-20 w-20 rounded-2xl bg-slate-200 flex items-center justify-center text-2xl font-semibold text-slate-700 ring-1 ring-slate-200">
-                      {profileInitials}
-                    </div>
-                  )}
+                  <div className="relative" ref={facultyPhotoMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setShowFacultyPhotoPopover((prev) => !prev)}
+                      disabled={uploadingPhoto || removingPhoto}
+                      className={`relative h-16 w-16 overflow-hidden rounded-2xl ring-1 ring-slate-200 ${
+                        uploadingPhoto || removingPhoto ? "cursor-not-allowed opacity-70" : "cursor-pointer"
+                      }`}
+                      title="Profile photo options"
+                    >
+                      {profile.profile_image_url ? (
+                        <img src={profile.profile_image_url} alt="Faculty profile" className="h-16 w-16 object-cover" />
+                      ) : (
+                        <div className="h-16 w-16 bg-slate-200 flex items-center justify-center text-lg font-semibold text-slate-700">
+                          {profileInitials}
+                        </div>
+                      )}
+                      <span className="absolute bottom-1 right-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-white ring-2 ring-white">
+                        <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M4 7h4l2-2h4l2 2h4v12H4z" />
+                          <circle cx="12" cy="13" r="3" />
+                        </svg>
+                      </span>
+                    </button>
+
+                    {showFacultyPhotoPopover && (
+                      <div className="absolute left-0 top-[92px] z-30 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_45px_-20px_rgba(15,23,42,0.5)]">
+                        <div className="absolute -top-2 left-6 h-3 w-3 rotate-45 border-l border-t border-slate-200 bg-white" />
+                        <div className="border-b border-slate-100 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Profile Photo</p>
+                        </div>
+                        <div className="p-2">
+                          <button
+                            type="button"
+                            onClick={() => facultyPhotoInputRef.current?.click()}
+                            disabled={uploadingPhoto || removingPhoto}
+                            className="w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+                          >
+                            {uploadingPhoto ? "Uploading..." : "Upload New Photo"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRemovePhoto}
+                            disabled={!profile.profile_image_url || removingPhoto || uploadingPhoto}
+                            className="mt-1 w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
+                          >
+                            {removingPhoto ? "Removing..." : "Remove Photo"}
+                          </button>
+                        </div>
+                        <div className="border-t border-slate-100 p-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowFacultyPhotoPopover(false)}
+                            disabled={uploadingPhoto || removingPhoto}
+                            className="w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="min-w-[220px] flex-1">
-                    <p className="text-[34px] leading-none font-semibold text-slate-900">{profile.name || "Faculty"}</p>
-                    <p className="mt-1 text-sm text-slate-600">{profile.department || "Department pending"}</p>
+                    <p className="text-3xl leading-none font-semibold text-slate-900">{profile.name || "Faculty"}</p>
+                    <p className="mt-0.5 text-sm text-slate-600">{profile.department || "Department pending"}</p>
                     <p className="text-sm text-slate-600">{profile.roll_number || "Employee number pending"}</p>
                   </div>
-                  <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100">
-                    {uploadingPhoto ? "Uploading..." : "Upload Photo"}
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp"
-                      className="hidden"
-                      onChange={handlePhotoUpload}
-                      disabled={uploadingPhoto}
-                    />
-                  </label>
                 </div>
+                <input
+                  ref={facultyPhotoInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  className="hidden"
+                  onChange={handlePhotoUpload}
+                  disabled={uploadingPhoto || removingPhoto}
+                />
               </div>
 
-              <div className="mt-4 border-b border-slate-200">
-                <div className="flex flex-wrap gap-2 pb-2">
+              <div className="mt-3 border-b border-slate-200">
+                <div className="flex flex-wrap gap-2 pb-1.5">
                   {tabs.map((tab) => (
                     <button
                       key={tab.key}
@@ -1926,8 +2083,8 @@ function FacultyDashboard({ onLogout }) {
               </div>
 
               {profileTab === "general" && (
-                <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={handleProfileSave}>
-                  <div className="md:col-span-2">
+                <form className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={handleProfileSave}>
+                  <div>
                     <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">Full Name</label>
                     <input
                       name="name"
@@ -1937,7 +2094,7 @@ function FacultyDashboard({ onLogout }) {
                       required
                     />
                   </div>
-                  <div className="md:col-span-2">
+                  <div>
                     <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600">Email</label>
                     <input
                       name="email"
@@ -1966,7 +2123,7 @@ function FacultyDashboard({ onLogout }) {
                       required
                     />
                   </div>
-                  <div className="md:col-span-2 flex items-center justify-end gap-2 border-t border-slate-200 pt-3 mt-1">
+                  <div className="md:col-span-2 sticky bottom-0 z-10 -mx-1 mt-1 flex items-center justify-end gap-2 border-t border-slate-200 bg-white/95 px-1 pb-1 pt-3 backdrop-blur supports-[backdrop-filter]:bg-white/80">
                     <button
                       type="button"
                       onClick={loadProfile}
@@ -3676,21 +3833,43 @@ function FacultyDashboard({ onLogout }) {
       const selectedTeacherName = selectedTeacher?.name || "No Active Conversation";
       const selectedTeacherInitial = (selectedTeacher?.name || "T").charAt(0).toUpperCase();
       const selectedTeacherMeta = selectedTeacher
-        ? `${selectedTeacher.department || "Faculty"}${selectedTeacher.email ? ` • ${selectedTeacher.email}` : ""}`
+        ? `${selectedTeacher.department || "Faculty"}${selectedTeacher.email ? ` | ${selectedTeacher.email}` : ""}`
         : "Select a teacher to begin conversation";
-      const chatPreviewByTeacherId = (teacherDirectory || []).reduce((acc, teacher) => {
+      const teacherChatMetaById = (teacherDirectory || []).reduce((acc, teacher) => {
         const teacherEmail = (teacher.email || "").trim().toLowerCase();
         const teacherName = (teacher.name || "").trim().toLowerCase();
-        const recent = (facultyInbox || [])
+        const matchedMessages = (facultyInbox || [])
           .filter((msg) => {
             const senderEmail = (msg.sender_email || "").trim().toLowerCase();
             const senderName = (msg.sender_name || "").trim().toLowerCase();
             return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
-          })
-          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-        acc[String(teacher.id)] = recent || null;
+          });
+        const recent = matchedMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
+        const seenMs = Number(teacherThreadLastSeenById?.[String(teacher.id)] || 0);
+        const unreadCount = matchedMessages.filter((msg) => {
+          const ts = new Date(msg.created_at || 0).getTime();
+          return Number.isFinite(ts) && ts > seenMs;
+        }).length;
+        acc[String(teacher.id)] = {
+          preview: recent,
+          latestMessageMs: recent?.created_at ? new Date(recent.created_at).getTime() : 0,
+          unreadCount,
+        };
         return acc;
       }, {});
+      const sortedTeacherDirectory = [...teacherDirectory].sort((a, b) => {
+        const aMeta = teacherChatMetaById[String(a.id)];
+        const bMeta = teacherChatMetaById[String(b.id)];
+        const timeDiff = Number(bMeta?.latestMessageMs || 0) - Number(aMeta?.latestMessageMs || 0);
+        if (timeDiff !== 0) return timeDiff;
+        return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+      });
+      const filteredTeacherDirectory = sortedTeacherDirectory.filter((teacher) => {
+        const meta = teacherChatMetaById[String(teacher.id)];
+        if (teacherListFilter === "personal") return Number(meta?.latestMessageMs || 0) > 0;
+        if (teacherListFilter === "groups") return false;
+        return true;
+      });
       const selectedTeacherConversation = selectedTeacher
         ? (facultyInbox || [])
             .filter((msg) => {
@@ -3702,6 +3881,75 @@ function FacultyDashboard({ onLogout }) {
             })
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         : [];
+      const sharedFiles = selectedTeacherConversation
+        .flatMap((msg) => {
+          const body = String(msg.body || "");
+          const links = body.match(/https?:\/\/[^\s)]+/gi) || [];
+          const fileLinks = links
+            .map((rawUrl) => rawUrl.replace(/[),.;!?]+$/, ""))
+            .filter((url) => /\.(pdf|doc|docx|ppt|pptx|xls|xlsx|zip|rar|txt)$/i.test(url) || /\/uploads\//i.test(url))
+            .map((url) => {
+              let fileName = "Shared file";
+              try {
+                const parsed = new URL(url);
+                const leaf = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).pop() || "");
+                if (leaf) fileName = leaf;
+              } catch (_) {}
+              const ext = fileName.includes(".") ? fileName.split(".").pop().toLowerCase() : "";
+              return {
+                id: `${msg.id}-${url}`,
+                name: fileName,
+                ext,
+                url,
+                created_at: msg.created_at,
+              };
+            });
+
+          if (fileLinks.length > 0) return fileLinks;
+          if (!body.toLowerCase().includes("[document]")) return [];
+
+          return [
+            {
+              id: `${msg.id}-document`,
+              name: "Document shared in chat",
+              ext: "doc",
+              url: "",
+              created_at: msg.created_at,
+            },
+          ];
+        })
+        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      const visibleSharedFiles = sharedFiles.slice(0, 6);
+      const sharedMedia = selectedTeacherConversation
+        .flatMap((msg) => {
+          const body = String(msg.body || "");
+          const links = body.match(/https?:\/\/[^\s)]+/gi) || [];
+          return links
+            .map((rawUrl) => rawUrl.replace(/[),.;!?]+$/, ""))
+            .map((url) => {
+              let fileName = "media";
+              try {
+                const parsed = new URL(url);
+                const leaf = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).pop() || "");
+                if (leaf) fileName = leaf;
+              } catch (_) {}
+              const ext = fileName.includes(".") ? fileName.split(".").pop().toLowerCase() : "";
+              const isImage = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"].includes(ext);
+              const isVideo = ["mp4", "mov", "webm", "avi", "mkv", "m4v"].includes(ext);
+              if (!isImage && !isVideo) return null;
+              return {
+                id: `${msg.id}-${url}`,
+                url,
+                name: fileName,
+                ext,
+                type: isImage ? "image" : "video",
+                created_at: msg.created_at,
+              };
+            })
+            .filter(Boolean);
+        })
+        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      const visibleSharedMedia = sharedMedia.slice(0, 4);
 
       return (
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -3734,9 +3982,24 @@ function FacultyDashboard({ onLogout }) {
                   className="mt-4 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 />
                 <div className="mt-3 flex gap-2 rounded-full bg-slate-100 p-1 text-sm">
-                  <span className="rounded-full bg-white px-4 py-1.5 font-medium text-blue-700 shadow-sm">All</span>
-                  <span className="rounded-full px-4 py-1.5 text-slate-600">Personal</span>
-                  <span className="rounded-full px-4 py-1.5 text-slate-600">Groups</span>
+                  {[
+                    { key: "all", label: "All" },
+                    { key: "personal", label: "Personal" },
+                    { key: "groups", label: "Groups" },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setTeacherListFilter(tab.key)}
+                      className={`rounded-full px-4 py-1.5 transition ${
+                        teacherListFilter === tab.key
+                          ? "bg-white font-medium text-blue-700 shadow-sm"
+                          : "text-slate-600 hover:bg-white/70"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -3745,15 +4008,21 @@ function FacultyDashboard({ onLogout }) {
                   <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{teacherDirectoryError}</div>
                 ) : loadingTeacherDirectory ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading teachers...</p>
-                ) : teacherDirectory.length === 0 ? (
+                ) : filteredTeacherDirectory.length === 0 ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                    No other signed-up teachers found.
+                    {teacherListFilter === "groups"
+                      ? "No group conversations available."
+                      : teacherListFilter === "personal"
+                      ? "No personal conversations yet."
+                      : "No other signed-up teachers found."}
                   </p>
                 ) : (
                   <div className="space-y-1.5">
-                    {teacherDirectory.map((teacher) => {
+                    {filteredTeacherDirectory.map((teacher) => {
                       const isSelected = String(facultyMessageForm.recipient_id) === String(teacher.id);
-                      const preview = chatPreviewByTeacherId[String(teacher.id)];
+                      const teacherMeta = teacherChatMetaById[String(teacher.id)];
+                      const preview = teacherMeta?.preview;
+                      const unreadCount = Number(teacherMeta?.unreadCount || 0);
                       const previewTime = preview?.created_at
                         ? new Date(preview.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                         : "";
@@ -3762,8 +4031,10 @@ function FacultyDashboard({ onLogout }) {
                           key={teacher.id}
                           type="button"
                           onClick={() => selectTeacherForMessage(teacher.id)}
-                          className={`w-full rounded-2xl px-3 py-3 text-left transition ${
-                            isSelected ? "bg-slate-100 shadow-[inset_3px_0_0_0_#2563eb]" : "hover:bg-slate-50"
+                          className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                            isSelected
+                              ? "border-blue-300 bg-blue-50 shadow-[inset_3px_0_0_0_#2563eb]"
+                              : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
                           }`}
                         >
                           <div className="flex items-start gap-3">
@@ -3777,7 +4048,17 @@ function FacultyDashboard({ onLogout }) {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
                                 <p className="truncate text-[15px] font-semibold text-slate-900">{teacher.name}</p>
-                                <p className="text-[11px] text-slate-400">{previewTime}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-[11px] text-slate-400">{previewTime}</p>
+                                  {unreadCount > 0 && (
+                                    <span
+                                      className="inline-flex min-w-5 items-center justify-center rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+                                      aria-label={`${unreadCount} unread messages`}
+                                    >
+                                      {unreadCount > 99 ? "99+" : unreadCount}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                               <p className="mt-0.5 truncate text-xs text-slate-500">{preview?.body || "Start conversation"}</p>
                             </div>
@@ -3989,7 +4270,7 @@ function FacultyDashboard({ onLogout }) {
                     rows={1}
                     value={facultyMessageForm.body}
                     onChange={handleFacultyMessageInput}
-                    placeholder={selectedTeacher ? "Type Your Message" : "Select a teacher first"}
+                    placeholder={selectedTeacher ? "Type your message" : "Select a teacher first"}
                     className="max-h-24 min-h-[46px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-base outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-100"
                     required
                     disabled={!selectedTeacher}
@@ -3997,7 +4278,7 @@ function FacultyDashboard({ onLogout }) {
                   <button
                     type="button"
                     aria-label="Voice message"
-                    className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-700"
+                    className="flex h-10 w-10 items-center justify-center rounded-full border border-violet-200 bg-violet-50 text-violet-700 transition hover:bg-violet-100"
                   >
                     <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
                       <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Zm5-3a1 1 0 1 1 2 0 7 7 0 0 1-6 6.92V20h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.08A7 7 0 0 1 5 11a1 1 0 0 1 2 0 5 5 0 1 0 10 0Z" />
@@ -4007,8 +4288,10 @@ function FacultyDashboard({ onLogout }) {
                     type="submit"
                     disabled={!selectedTeacher}
                     aria-label="Send message"
-                    className={`flex h-10 w-10 items-center justify-center rounded-full ${
-                      selectedTeacher ? "bg-violet-500 text-white hover:bg-violet-600" : "cursor-not-allowed bg-slate-200 text-slate-500"
+                    className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
+                      selectedTeacher
+                        ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700"
+                        : "cursor-not-allowed bg-slate-200 text-slate-500"
                     }`}
                   >
                     <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
@@ -4020,14 +4303,18 @@ function FacultyDashboard({ onLogout }) {
                       type="button"
                       aria-label="More actions"
                       onClick={() => setShowTeacherMenu((prev) => !prev)}
-                      className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-700"
+                      className={`flex h-10 w-10 items-center justify-center rounded-full border transition ${
+                        showTeacherMenu
+                          ? "border-violet-300 bg-violet-100 text-violet-800"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700"
+                      }`}
                     >
                       <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
                         <path d="M12 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
                       </svg>
                     </button>
                     {showTeacherMenu && (
-                      <div className="absolute bottom-12 right-0 z-30 w-56 rounded-2xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
+                      <div className="absolute bottom-12 right-0 z-30 w-60 rounded-2xl border border-slate-200 bg-white p-2.5 shadow-xl ring-1 ring-slate-100">
                         <button
                           type="button"
                           onClick={() => {
@@ -4037,9 +4324,9 @@ function FacultyDashboard({ onLogout }) {
                             }));
                             setShowTeacherMenu(false);
                           }}
-                          className="flex w-full items-center gap-2 rounded-xl border border-emerald-400 px-3 py-2 text-left text-sm font-medium text-slate-100 hover:bg-slate-800"
+                          className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-violet-50 hover:text-violet-800"
                         >
-                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-violet-400" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-violet-600" aria-hidden="true">
                             <path d="M7 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5a2 2 0 0 0-.59-1.41l-4.5-4.5A2 2 0 0 0 12.5 2H7Zm5 1.5V8a1 1 0 0 0 1 1h4.5L12 3.5Z" />
                           </svg>
                           Document
@@ -4053,9 +4340,9 @@ function FacultyDashboard({ onLogout }) {
                             }));
                             setShowTeacherMenu(false);
                           }}
-                          className="mt-1.5 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-100 hover:bg-slate-800"
+                          className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-violet-50 hover:text-violet-800"
                         >
-                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-sky-400" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-sky-600" aria-hidden="true">
                             <path d="M5 3a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5Zm14 12H8.83l2.58-3.22a1 1 0 0 1 1.54-.04L15 14.5l1.6-2a1 1 0 0 1 1.55.03L19 13.8V15ZM9 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM3 18a2 2 0 0 0 2 2h13a1 1 0 1 1 0 2H5a4 4 0 0 1-4-4v-1a1 1 0 1 1 2 0v1Z" />
                           </svg>
                           Photos & videos
@@ -4094,13 +4381,22 @@ function FacultyDashboard({ onLogout }) {
                   <p className="mt-3 text-2xl font-semibold text-slate-900">{selectedTeacher.name}</p>
                   <p className="mt-1 text-sm text-slate-500">{selectedTeacher.department || "Faculty"}</p>
                   <div className="mt-4 flex items-center justify-center gap-2">
-                    <button type="button" className="rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                    <button type="button" className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-current" aria-hidden="true">
+                        <path d="M4 7a3 3 0 0 1 3-3h7a3 3 0 0 1 3 3v1.3l3.1-1.8A1 1 0 0 1 22 7.4v9.2a1 1 0 0 1-1.5.86L17 15.7V17a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7Z" />
+                      </svg>
                       Video
                     </button>
-                    <button type="button" className="rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                    <button type="button" className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-current" aria-hidden="true">
+                        <path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.03-.24c1.12.37 2.31.57 3.56.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.85 21 3 13.15 3 3a1 1 0 0 1 1-1h3.49a1 1 0 0 1 1 1c0 1.25.2 2.44.57 3.56a1 1 0 0 1-.24 1.03l-2.2 2.2Z" />
+                      </svg>
                       Call
                     </button>
-                    <button type="button" className="rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                    <button type="button" className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-current" aria-hidden="true">
+                        <path d="M12 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+                      </svg>
                       More
                     </button>
                   </div>
@@ -4109,26 +4405,92 @@ function FacultyDashboard({ onLogout }) {
                 <div className="border-t border-slate-200 px-4 py-4">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-slate-900">Shared Media</p>
-                    <button type="button" className="text-xs text-indigo-600">View All</button>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      {sharedMedia.length}
+                    </span>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <div className="h-20 rounded-xl bg-gradient-to-br from-cyan-200 to-blue-300" />
-                    <div className="h-20 rounded-xl bg-gradient-to-br from-pink-200 to-violet-300" />
-                    <div className="h-20 rounded-xl bg-gradient-to-br from-emerald-200 to-teal-300" />
-                    <div className="h-20 rounded-xl bg-gradient-to-br from-amber-200 to-orange-300" />
-                  </div>
+                  {visibleSharedMedia.length === 0 ? (
+                    <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+                      No shared photos or videos yet.
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {visibleSharedMedia.map((item) => (
+                        <a
+                          key={item.id}
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+                        >
+                          {item.type === "image" ? (
+                            <img src={item.url} alt={item.name} className="h-24 w-full object-cover transition group-hover:scale-[1.02]" />
+                          ) : (
+                            <div className="flex h-24 w-full items-center justify-center bg-slate-800 text-white">
+                              <svg viewBox="0 0 24 24" className="h-8 w-8 fill-current opacity-90" aria-hidden="true">
+                                <path d="M8 6a2 2 0 0 1 3.2-1.6l6 4.5a2 2 0 0 1 0 3.2l-6 4.5A2 2 0 0 1 8 15V6Z" />
+                              </svg>
+                            </div>
+                          )}
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
+                            <p className="truncate text-[10px] font-medium text-white">{item.type === "image" ? "Photo" : "Video"}</p>
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="border-t border-slate-200 px-4 py-4">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-slate-900">Shared Files</p>
-                    <button type="button" className="text-xs text-indigo-600">View All</button>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      {sharedFiles.length}
+                    </span>
                   </div>
-                  <div className="mt-3 space-y-2">
-                    <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">How To Be An Expert</div>
-                    <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">Dont Worry, Be Happy</div>
-                    <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">Where's My Money?</div>
-                  </div>
+                  {visibleSharedFiles.length === 0 ? (
+                    <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+                      No shared files available yet.
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-2">
+                      {visibleSharedFiles.map((file) => {
+                        const isPdf = file.ext === "pdf";
+                        const isLinked = Boolean(file.url);
+                        const itemClassName =
+                          "group flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-slate-300 hover:bg-white";
+                        return isLinked ? (
+                          <a key={file.id} href={file.url} target="_blank" rel="noreferrer" className={itemClassName}>
+                            <span className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${isPdf ? "bg-rose-100 text-rose-700" : "bg-indigo-100 text-indigo-700"}`}>
+                              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+                                <path d="M7 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5a2 2 0 0 0-.59-1.41l-4.5-4.5A2 2 0 0 0 12.5 2H7Zm5 1.5V8a1 1 0 0 0 1 1h4.5L12 3.5Z" />
+                              </svg>
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-slate-800">{file.name}</span>
+                              <span className="block text-[11px] text-slate-500">
+                                {(file.ext || "file").toUpperCase()} | {new Date(file.created_at || 0).toLocaleDateString()}
+                              </span>
+                            </span>
+                          </a>
+                        ) : (
+                          <div key={file.id} className={itemClassName}>
+                            <span className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${isPdf ? "bg-rose-100 text-rose-700" : "bg-indigo-100 text-indigo-700"}`}>
+                              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
+                                <path d="M7 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5a2 2 0 0 0-.59-1.41l-4.5-4.5A2 2 0 0 0 12.5 2H7Zm5 1.5V8a1 1 0 0 0 1 1h4.5L12 3.5Z" />
+                              </svg>
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-slate-800">{file.name}</span>
+                              <span className="block text-[11px] text-slate-500">
+                                {(file.ext || "file").toUpperCase()} | {new Date(file.created_at || 0).toLocaleDateString()}
+                              </span>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </aside>
             )}
@@ -4178,26 +4540,81 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "notifications") {
+      const adminNotificationCount = facultyNotificationFeedItems.filter((item) => item.kind !== "teacher_message").length;
+      const teacherNotificationCount = facultyNotificationFeedItems.filter((item) => item.kind === "teacher_message").length;
+      const filteredNotificationItems = facultyNotificationFeedItems.filter((item) => {
+        if (notificationTypeFilter === "teacher") return item.kind === "teacher_message";
+        if (notificationTypeFilter === "admin") return item.kind !== "teacher_message";
+        return true;
+      });
+
       return (
         <div className="w-full space-y-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-white via-slate-50 to-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-slate-900">Notifications</h3>
-                <p className="mt-1 text-sm text-slate-500">
+              <div className="flex items-center gap-3">
+                <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700 ring-1 ring-blue-100">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
+                    <path d="M12 2a7 7 0 0 0-7 7v3.7L3.3 15a1.5 1.5 0 0 0 1.2 2.4h15a1.5 1.5 0 0 0 1.2-2.4L19 12.7V9a7 7 0 0 0-7-7Zm0 20a3 3 0 0 0 2.83-2H9.17A3 3 0 0 0 12 22Z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-xl font-semibold tracking-tight text-slate-900">Notifications</h3>
+                  <p className="mt-0.5 text-sm text-slate-500">
                   Real-time updates from admin announcements and teacher messages.
-                </p>
+                  </p>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
                   Total: {facultyNotificationFeedItems.length}
                 </span>
+                <div className="inline-flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => setNotificationTypeFilter("all")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                      notificationTypeFilter === "all"
+                        ? "bg-slate-900 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNotificationTypeFilter("admin")}
+                    className={`ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                      notificationTypeFilter === "admin"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"
+                    }`}
+                  >
+                    Admin ({adminNotificationCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNotificationTypeFilter("teacher")}
+                    className={`ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                      notificationTypeFilter === "teacher"
+                        ? "bg-violet-600 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"
+                    }`}
+                  >
+                    Teacher ({teacherNotificationCount})
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={refreshFacultyNotifications}
-                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  aria-label="Refresh notifications"
+                  title="Refresh notifications"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
                 >
-                  Refresh
+                  <svg viewBox="0 0 24 24" className="h-4 w-4 stroke-current" fill="none" strokeWidth="2" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <path d="M21 3v6h-6" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -4210,47 +4627,57 @@ function FacultyDashboard({ onLogout }) {
               <div className="m-5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {inboxError}
               </div>
-            ) : facultyNotificationFeedItems.length === 0 ? (
-              <div className="px-5 py-8 text-sm text-slate-500">No notifications yet.</div>
+            ) : filteredNotificationItems.length === 0 ? (
+              <div className="px-5 py-8 text-sm text-slate-500">
+                {notificationTypeFilter === "admin"
+                  ? "No admin announcements found."
+                  : notificationTypeFilter === "teacher"
+                  ? "No teacher messages found."
+                  : "No notifications yet."}
+              </div>
             ) : (
-              <div className="divide-y divide-slate-200">
-                {facultyNotificationFeedItems.map((item, index) => (
-                  <article key={item.id} className="flex items-start gap-4 px-5 py-4 hover:bg-slate-50/70">
+              <div className="divide-y divide-slate-200 bg-slate-50/40">
+                {filteredNotificationItems.map((item, index) => (
+                  <article key={item.id} className="flex items-start gap-3 bg-white px-4 py-3 transition hover:bg-slate-50">
                     <div
-                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${
+                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${
                         notificationAvatarPalette[index % notificationAvatarPalette.length]
-                      } text-sm font-semibold text-white`}
+                      } text-xs font-semibold text-white`}
                     >
                       {notificationInitialsFrom(item.actorName)}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="truncate text-lg font-semibold text-cyan-600">{item.actorName}</p>
-                          <p className="truncate text-sm text-slate-400">
-                            {item.subject ? `${item.subject} · ` : ""}
+                          <p className="truncate text-sm font-semibold text-slate-900">{item.actorName}</p>
+                          <p className="truncate text-xs text-slate-500">
+                            {item.subject ? `${item.subject} | ` : ""}
                             {item.actionText}
                           </p>
                         </div>
-                        <span className="shrink-0 text-xs font-medium italic text-slate-400">
-                          {notificationTimeAgo(item.createdAt)}
-                        </span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                              item.kind === "teacher_message"
+                                ? "border-violet-200 bg-violet-50 text-violet-700"
+                                : "border-blue-200 bg-blue-50 text-blue-700"
+                            }`}
+                          >
+                            {item.kind === "teacher_message" ? "Teacher Message" : "Admin Announcement"}
+                          </span>
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                            {notificationTimeAgo(item.createdAt)}
+                          </span>
+                        </div>
                       </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                            item.kind === "teacher_message"
-                              ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border border-blue-200 bg-blue-50 text-blue-700"
-                          }`}
-                        >
-                          {item.kind === "teacher_message" ? "teacher message" : item.roleTag}
-                        </span>
                         {item.senderEmail && (
-                          <span className="truncate text-xs text-slate-400">{item.senderEmail}</span>
+                          <span className="truncate text-xs text-slate-500">{item.senderEmail}</span>
                         )}
                       </div>
-                      <p className="mt-2 line-clamp-2 text-base leading-6 text-slate-700">{item.bodyText}</p>
+                      <div className="mt-1.5 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2">
+                        <p className="line-clamp-2 text-sm leading-5 text-slate-700">{item.bodyText}</p>
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -4414,5 +4841,7 @@ function FacultyDashboard({ onLogout }) {
 }
 
 export default FacultyDashboard;
+
+
 
 
