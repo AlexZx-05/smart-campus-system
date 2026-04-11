@@ -3381,13 +3381,13 @@ function FacultyDashboard({ onLogout }) {
                 )}
 
                 {selectedClassroomTab === "people" && (
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-6">
-                    <div className="border-b border-slate-200 pb-5">
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+                    <div className="border-b border-slate-200 pb-4">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className="text-2xl font-semibold text-slate-900">Teachers</h4>
+                        <h4 className="text-xl font-semibold text-slate-900">Teachers</h4>
                         <button
                           type="button"
-                          className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                          className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                           title="Manage teacher access"
                         >
                           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3398,26 +3398,41 @@ function FacultyDashboard({ onLogout }) {
                           </svg>
                         </button>
                       </div>
-                      <div className="mt-4 flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
-                          {(selectedClassroom.faculty_name || facultyName || "F").slice(0, 1).toUpperCase()}
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold uppercase tracking-wide text-slate-900">
-                            {selectedClassroom.faculty_name || facultyName || "Faculty"}
-                          </p>
-                          <p className="text-xs text-slate-500">{profile.email || "Teacher account"}</p>
+                      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <div className="flex items-center gap-3">
+                          {selectedClassroom.faculty_profile_image_url || profile.profile_image_url ? (
+                            <img
+                              src={selectedClassroom.faculty_profile_image_url || profile.profile_image_url}
+                              alt={selectedClassroom.faculty_name || facultyName || "Faculty"}
+                              className="h-11 w-11 rounded-full object-cover ring-1 ring-slate-200"
+                            />
+                          ) : (
+                            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+                              {(selectedClassroom.faculty_name || facultyName || "F").slice(0, 1).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold uppercase tracking-wide text-slate-900">
+                              {selectedClassroom.faculty_name || facultyName || "Faculty"}
+                            </p>
+                            <p className="truncate text-xs text-slate-500">
+                              {selectedClassroom.faculty_email || profile.email || "Teacher account"}
+                            </p>
+                          </div>
+                          <span className="ml-auto rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+                            Owner
+                          </span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="pt-5">
+                    <div className="pt-4">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className="text-2xl font-semibold text-slate-900">Students</h4>
+                        <h4 className="text-xl font-semibold text-slate-900">Students</h4>
                         <button
                           type="button"
                           onClick={() => setShowPeopleInviteForm((prev) => !prev)}
-                          className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                          className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                           title="Invite students"
                         >
                           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3436,7 +3451,7 @@ function FacultyDashboard({ onLogout }) {
                             value={newClassroomAccessEmail}
                             onChange={(e) => setNewClassroomAccessEmail(e.target.value)}
                             placeholder="student@college.edu"
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                           />
                           <button
                             type="submit"
@@ -3453,7 +3468,7 @@ function FacultyDashboard({ onLogout }) {
                       {loadingClassroomAccessEmails ? (
                         <p className="mt-3 text-sm text-slate-500">Loading invited students...</p>
                       ) : classroomAccessEmails.length === 0 ? (
-                        <div className="mt-8 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                        <div className="mt-6 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-7 text-center">
                           <p className="text-sm text-slate-600">Add students to this class</p>
                           <button
                             type="button"
@@ -3513,11 +3528,24 @@ function FacultyDashboard({ onLogout }) {
                             ) : classroomPeople.length === 0 ? (
                               <p className="text-sm text-slate-500">No students joined yet.</p>
                             ) : (
-                              <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
+                              <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
                                 {classroomPeople.map((row) => (
-                                  <div key={row.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                                    <p className="text-sm font-medium text-slate-800">{row.student_name || "Student"}</p>
-                                    <p className="mt-0.5 text-xs text-slate-600">{row.student_email || "-"}</p>
+                                  <div key={row.id} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                                    {row.student_profile_image_url ? (
+                                      <img
+                                        src={row.student_profile_image_url}
+                                        alt={row.student_name || "Student"}
+                                        className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200"
+                                      />
+                                    ) : (
+                                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+                                        {(row.student_name || "S").slice(0, 1).toUpperCase()}
+                                      </div>
+                                    )}
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-medium text-slate-800">{row.student_name || "Student"}</p>
+                                      <p className="mt-0.5 truncate text-xs text-slate-600">{row.student_email || "-"}</p>
+                                    </div>
                                   </div>
                                 ))}
                               </div>
