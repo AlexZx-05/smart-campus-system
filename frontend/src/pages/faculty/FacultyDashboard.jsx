@@ -15,6 +15,7 @@ const notificationAvatarPalette = [
   "from-orange-400 to-rose-600",
   "from-violet-400 to-indigo-600",
 ];
+const LAST_SELECTED_TEACHER_KEY = "faculty_last_selected_teacher_id";
 
 const notificationInitialsFrom = (name = "") =>
   name
@@ -113,6 +114,9 @@ function FacultyDashboard({ onLogout }) {
     body: "",
   });
   const [showTeacherCompose, setShowTeacherCompose] = useState(false);
+  const [showTeacherProfilePanel, setShowTeacherProfilePanel] = useState(false);
+  const [showTeacherAvatarPreview, setShowTeacherAvatarPreview] = useState(false);
+  const [showTeacherMenu, setShowTeacherMenu] = useState(false);
   const [facultyMessageFeedback, setFacultyMessageFeedback] = useState("");
   const [facultyMessageError, setFacultyMessageError] = useState("");
   const [facultyInbox, setFacultyInbox] = useState([]);
@@ -215,6 +219,7 @@ function FacultyDashboard({ onLogout }) {
   const [submissionReviewDrafts, setSubmissionReviewDrafts] = useState({});
   const [assignmentNowMs, setAssignmentNowMs] = useState(Date.now());
   const composeTeacherMessageRef = useRef(null);
+  const teacherMenuRef = useRef(null);
   const classroomTabContentRef = useRef(null);
   const classroomTabsRef = useRef(null);
   const classworkCreateMenuRef = useRef(null);
@@ -520,6 +525,66 @@ function FacultyDashboard({ onLogout }) {
   }, [facultyMessageFeedback]);
 
   useEffect(() => {
+    if (activePage !== "teachers") return;
+    if (!teacherDirectory.length) return;
+
+    const currentRecipient = String(facultyMessageForm.recipient_id || "");
+    if (currentRecipient && teacherDirectory.some((teacher) => String(teacher.id) === currentRecipient)) {
+      try {
+        localStorage.setItem(LAST_SELECTED_TEACHER_KEY, currentRecipient);
+      } catch (_) {}
+      return;
+    }
+
+    let nextTeacherId = "";
+
+    try {
+      const savedTeacherId = localStorage.getItem(LAST_SELECTED_TEACHER_KEY);
+      if (savedTeacherId && teacherDirectory.some((teacher) => String(teacher.id) === String(savedTeacherId))) {
+        nextTeacherId = String(savedTeacherId);
+      }
+    } catch (_) {}
+
+    if (!nextTeacherId && facultyInbox.length) {
+      const sortedInbox = [...facultyInbox].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const latestMatchedTeacher = sortedInbox
+        .map((msg) => {
+          const senderEmail = (msg.sender_email || "").trim().toLowerCase();
+          const senderName = (msg.sender_name || "").trim().toLowerCase();
+          return teacherDirectory.find((teacher) => {
+            const teacherEmail = (teacher.email || "").trim().toLowerCase();
+            const teacherName = (teacher.name || "").trim().toLowerCase();
+            return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
+          });
+        })
+        .find(Boolean);
+      if (latestMatchedTeacher?.id) nextTeacherId = String(latestMatchedTeacher.id);
+    }
+
+    if (!nextTeacherId && teacherDirectory[0]?.id) {
+      nextTeacherId = String(teacherDirectory[0].id);
+    }
+
+    if (!nextTeacherId || nextTeacherId === currentRecipient) return;
+    setFacultyMessageForm((prev) => ({ ...prev, recipient_id: nextTeacherId }));
+    try {
+      localStorage.setItem(LAST_SELECTED_TEACHER_KEY, nextTeacherId);
+    } catch (_) {}
+  }, [activePage, teacherDirectory, facultyInbox, facultyMessageForm.recipient_id]);
+
+  useEffect(() => {
+    if (!showTeacherMenu) return;
+    const onMouseDown = (event) => {
+      if (!teacherMenuRef.current) return;
+      if (!teacherMenuRef.current.contains(event.target)) {
+        setShowTeacherMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [showTeacherMenu]);
+
+  useEffect(() => {
     if (!conflictMessage) return undefined;
     const timer = setTimeout(() => setConflictMessage(""), 2200);
     return () => clearTimeout(timer);
@@ -687,7 +752,12 @@ function FacultyDashboard({ onLogout }) {
 
   const selectTeacherForMessage = (teacherId) => {
     setFacultyMessageForm((prev) => ({ ...prev, recipient_id: String(teacherId) }));
+    try {
+      localStorage.setItem(LAST_SELECTED_TEACHER_KEY, String(teacherId));
+    } catch (_) {}
     setShowTeacherCompose(true);
+    setShowTeacherProfilePanel(false);
+    setShowTeacherMenu(false);
     setFacultyMessageError("");
     setFacultyMessageFeedback("");
     setTimeout(() => {
@@ -709,7 +779,7 @@ function FacultyDashboard({ onLogout }) {
     try {
       const payload = {
         recipient_id: Number(facultyMessageForm.recipient_id),
-        subject: facultyMessageForm.subject,
+        subject: (facultyMessageForm.subject || "").trim() || "Faculty Chat",
         body: facultyMessageForm.body,
       };
       const res = await PreferenceService.sendFacultyPeerMessage(payload);
@@ -3603,212 +3673,502 @@ function FacultyDashboard({ onLogout }) {
       const selectedTeacher = teacherDirectory.find(
         (teacher) => String(teacher.id) === String(facultyMessageForm.recipient_id)
       );
-      const selectedTeacherName = selectedTeacher?.name || "None";
+      const selectedTeacherName = selectedTeacher?.name || "No Active Conversation";
+      const selectedTeacherInitial = (selectedTeacher?.name || "T").charAt(0).toUpperCase();
+      const selectedTeacherMeta = selectedTeacher
+        ? `${selectedTeacher.department || "Faculty"}${selectedTeacher.email ? ` • ${selectedTeacher.email}` : ""}`
+        : "Select a teacher to begin conversation";
+      const chatPreviewByTeacherId = (teacherDirectory || []).reduce((acc, teacher) => {
+        const teacherEmail = (teacher.email || "").trim().toLowerCase();
+        const teacherName = (teacher.name || "").trim().toLowerCase();
+        const recent = (facultyInbox || [])
+          .filter((msg) => {
+            const senderEmail = (msg.sender_email || "").trim().toLowerCase();
+            const senderName = (msg.sender_name || "").trim().toLowerCase();
+            return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
+          })
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+        acc[String(teacher.id)] = recent || null;
+        return acc;
+      }, {});
+      const selectedTeacherConversation = selectedTeacher
+        ? (facultyInbox || [])
+            .filter((msg) => {
+              const senderEmail = (msg.sender_email || "").trim().toLowerCase();
+              const senderName = (msg.sender_name || "").trim().toLowerCase();
+              const teacherEmail = (selectedTeacher.email || "").trim().toLowerCase();
+              const teacherName = (selectedTeacher.name || "").trim().toLowerCase();
+              return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
+            })
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        : [];
 
       return (
-        <div className="space-y-5">
-          <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm p-6">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.08),transparent_52%)]" />
-            <div className="relative flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-blue-700">
-                  Faculty Network
-                </p>
-                <h3 className="mt-3 text-2xl font-semibold text-slate-900">Teachers Directory</h3>
-                <p className="text-sm text-slate-600 mt-2">
-                  Discover faculty contacts, message teachers quickly, and keep communication centralized.
-                </p>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
-                    {teacherDirectory.length} teacher{teacherDirectory.length === 1 ? "" : "s"}
-                  </span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
-                    Selected: {selectedTeacherName}
-                  </span>
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div
+            className={`grid grid-cols-1 xl:h-[calc(100vh-105px)] ${
+              showTeacherProfilePanel && selectedTeacher
+                ? "xl:grid-cols-[320px_minmax(0,1fr)_280px]"
+                : "xl:grid-cols-[320px_minmax(0,1fr)]"
+            }`}
+          >
+            <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-white xl:border-b-0 xl:border-r">
+              <div className="border-b border-slate-200 p-4">
+                <div className="flex items-center gap-3">
+                  {profile.profile_image_url ? (
+                    <img src={profile.profile_image_url} alt={facultyName} className="h-11 w-11 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-amber-100 text-sm font-semibold text-amber-700">
+                      {(facultyName || "F").charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-xl font-semibold text-slate-900">{facultyName}</p>
+                    <p className="truncate text-sm text-slate-500">Info account</p>
+                  </div>
+                </div>
+                <input
+                  value={teacherSearch}
+                  onChange={handleTeacherSearch}
+                  placeholder="Search by name/email/department"
+                  className="mt-4 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                />
+                <div className="mt-3 flex gap-2 rounded-full bg-slate-100 p-1 text-sm">
+                  <span className="rounded-full bg-white px-4 py-1.5 font-medium text-blue-700 shadow-sm">All</span>
+                  <span className="rounded-full px-4 py-1.5 text-slate-600">Personal</span>
+                  <span className="rounded-full px-4 py-1.5 text-slate-600">Groups</span>
                 </div>
               </div>
-              <input
-                value={teacherSearch}
-                onChange={handleTeacherSearch}
-                placeholder="Search by name/email/department"
-                className="w-full md:w-96 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-              />
-            </div>
-            {teacherDirectoryError && (
-              <div className="relative mt-5 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {teacherDirectoryError}
-              </div>
-            )}
-          </div>
 
-          {loadingTeacherDirectory ? (
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <p className="text-sm text-slate-500">Loading teachers...</p>
-            </div>
-          ) : teacherDirectory.length === 0 ? (
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <p className="text-sm text-slate-500">No other signed-up teachers found.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 justify-items-center">
-              {teacherDirectory.map((teacher) => (
-                <div
-                  key={teacher.id}
-                  className={`w-full max-w-[350px] rounded-2xl border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md flex flex-col ${
-                    String(facultyMessageForm.recipient_id) === String(teacher.id)
-                      ? "border-blue-300 ring-4 ring-blue-100"
-                      : "border-slate-200"
-                  }`}
-                >
-                  <div className="text-center">
-                    {teacher.profile_image_url ? (
-                      <img
-                        src={teacher.profile_image_url}
-                        alt={teacher.name}
-                        className="h-16 w-16 rounded-full object-cover border border-slate-200 mx-auto ring-2 ring-slate-100"
-                      />
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                {teacherDirectoryError ? (
+                  <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{teacherDirectoryError}</div>
+                ) : loadingTeacherDirectory ? (
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading teachers...</p>
+                ) : teacherDirectory.length === 0 ? (
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                    No other signed-up teachers found.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {teacherDirectory.map((teacher) => {
+                      const isSelected = String(facultyMessageForm.recipient_id) === String(teacher.id);
+                      const preview = chatPreviewByTeacherId[String(teacher.id)];
+                      const previewTime = preview?.created_at
+                        ? new Date(preview.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                        : "";
+                      return (
+                        <button
+                          key={teacher.id}
+                          type="button"
+                          onClick={() => selectTeacherForMessage(teacher.id)}
+                          className={`w-full rounded-2xl px-3 py-3 text-left transition ${
+                            isSelected ? "bg-slate-100 shadow-[inset_3px_0_0_0_#2563eb]" : "hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            {teacher.profile_image_url ? (
+                              <img src={teacher.profile_image_url} alt={teacher.name} className="h-10 w-10 rounded-full object-cover" />
+                            ) : (
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+                                {(teacher.name || "T").charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="truncate text-[15px] font-semibold text-slate-900">{teacher.name}</p>
+                                <p className="text-[11px] text-slate-400">{previewTime}</p>
+                              </div>
+                              <p className="mt-0.5 truncate text-xs text-slate-500">{preview?.body || "Start conversation"}</p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </aside>
+
+            <section className="flex min-h-0 flex-col bg-[#f2f4f8]">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3.5">
+                <div className="flex min-w-0 items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => selectedTeacher && setShowTeacherAvatarPreview(true)}
+                    disabled={!selectedTeacher}
+                    className={`${selectedTeacher ? "cursor-pointer" : "cursor-default"} rounded-full`}
+                    aria-label="Open teacher avatar preview"
+                  >
+                    {selectedTeacher ? (
+                      selectedTeacher.profile_image_url ? (
+                        <img src={selectedTeacher.profile_image_url} alt={selectedTeacher.name} className="h-10 w-10 rounded-full object-cover ring-2 ring-transparent transition hover:ring-violet-200" />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-sm font-semibold text-rose-700 ring-2 ring-transparent transition hover:ring-violet-200">
+                          {selectedTeacherInitial}
+                        </div>
+                      )
                     ) : (
-                      <div className="h-16 w-16 rounded-full border border-slate-200 bg-slate-100 text-slate-700 flex items-center justify-center font-semibold text-xl mx-auto ring-2 ring-slate-100">
-                        {(teacher.name || "T").charAt(0).toUpperCase()}
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-xs text-slate-600">--</div>
+                    )}
+                  </button>
+                  <div className="min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => selectedTeacher && setShowTeacherProfilePanel(true)}
+                      className={`truncate text-left text-[42px] leading-10 font-semibold tracking-tight ${
+                        selectedTeacher ? "cursor-pointer text-slate-900 hover:text-blue-700" : "cursor-default text-slate-900"
+                      }`}
+                    >
+                      {selectedTeacherName}
+                    </button>
+                    <p className="truncate text-sm text-slate-500">{selectedTeacherMeta}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={loadFacultyPeerInbox}
+                    aria-label="Refresh messages"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 stroke-current" fill="none" strokeWidth="2" aria-hidden="true">
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                      <path d="M21 3v6h-6" />
+                    </svg>
+                  </button>
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      onClick={() => selectedTeacher && setShowTeacherProfilePanel((prev) => !prev)}
+                      disabled={!selectedTeacher}
+                      className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label="Teacher info"
+                    >
+                      i
+                    </button>
+                    {selectedTeacher && (
+                      <div className="pointer-events-none absolute right-0 top-11 z-20 w-72 translate-y-1 rounded-2xl border border-slate-200 bg-white p-4 text-left opacity-0 shadow-xl transition duration-150 group-hover:translate-y-0 group-hover:opacity-100">
+                        <div className="flex items-center gap-3">
+                          {selectedTeacher.profile_image_url ? (
+                            <img
+                              src={selectedTeacher.profile_image_url}
+                              alt={selectedTeacher.name}
+                              className="h-11 w-11 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-rose-100 text-sm font-semibold text-rose-700">
+                              {selectedTeacherInitial}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">{selectedTeacher.name}</p>
+                            <p className="truncate text-xs text-slate-500">{selectedTeacher.department || "Faculty"}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-1.5 text-xs text-slate-600">
+                          <p>
+                            <span className="font-semibold text-slate-800">Email:</span> {selectedTeacher.email || "-"}
+                          </p>
+                          <p>
+                            <span className="font-semibold text-slate-800">Employee ID:</span> {selectedTeacher.roll_number || "-"}
+                          </p>
+                          <p>
+                            <span className="font-semibold text-slate-800">Status:</span> Available for faculty communication
+                          </p>
+                        </div>
                       </div>
                     )}
-                    <div className="mt-4 h-px w-full bg-slate-200" />
-                    <h4 className="mt-4 text-[1.35rem] leading-tight font-semibold text-slate-900 break-words">{teacher.name}</h4>
-                    <p className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold tracking-wide uppercase text-slate-600">
-                      {teacher.department || "Department not set"}
-                    </p>
                   </div>
+                  <button type="button" className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500">+</button>
+                </div>
+              </div>
 
-                  <div className="mt-5 space-y-2 text-sm text-center">
-                    <p className="text-slate-700 break-words">
-                      <span className="font-semibold text-slate-900">Email:</span> {teacher.email}
-                    </p>
-                    <p className="text-slate-700">
-                      <span className="font-semibold text-slate-900">Employee ID:</span> {teacher.roll_number || "-"}
-                    </p>
+              <div className="min-h-0 flex-1 overflow-y-auto bg-[#eceff5] px-7 py-6">
+                {loadingFacultyInbox ? (
+                  <p className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">Loading teacher messages...</p>
+                ) : !selectedTeacher ? (
+                  <div className="flex h-full items-start justify-center pt-12">
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-7 text-center text-sm text-slate-600">
+                      Select a teacher from the left list to open the chat.
+                    </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => selectTeacherForMessage(teacher.id)}
-                    className="mt-6 w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700 px-3 py-2.5 text-base font-medium"
-                  >
-                    Message Teacher
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className={`grid grid-cols-1 ${showTeacherCompose ? "xl:grid-cols-2" : ""} gap-5`}>
-            {showTeacherCompose && (
-              <div ref={composeTeacherMessageRef} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-base font-semibold text-slate-900">Send Message to Teacher</h4>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowTeacherCompose(false);
-                      setFacultyMessageForm((prev) => ({ ...prev, recipient_id: "", subject: "", body: "" }));
-                    }}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
-                  >
-                    Close
-                  </button>
-                </div>
-                {selectedTeacher && (
-                  <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
-                    <p className="text-xs text-blue-700 font-medium uppercase tracking-wide">Selected Teacher</p>
-                    <p className="text-sm text-blue-900 mt-1 font-semibold">{selectedTeacher.name}</p>
-                    <p className="text-xs text-blue-700 mt-0.5">{selectedTeacher.email}</p>
+                ) : selectedTeacherConversation.length === 0 ? (
+                  <div className="mx-auto w-full max-w-4xl space-y-4 pt-10">
+                    <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
+                      <p className="text-base font-semibold text-slate-900">No messages from {selectedTeacher.name} yet.</p>
+                      <p className="mt-1 text-sm text-slate-500">Start with one of these professional conversation openers.</p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFacultyMessageForm((prev) => ({
+                            ...prev,
+                            body: "Hello, I wanted to coordinate on today's teaching schedule.",
+                          }))
+                        }
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm hover:bg-slate-50"
+                      >
+                        Coordinate schedule
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFacultyMessageForm((prev) => ({
+                            ...prev,
+                            body: "Could we discuss the class plan for this week?",
+                          }))
+                        }
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm hover:bg-slate-50"
+                      >
+                        Discuss class plan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFacultyMessageForm((prev) => ({
+                            ...prev,
+                            body: "Please share any updates for the students in your department.",
+                          }))
+                        }
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm hover:bg-slate-50"
+                      >
+                        Ask for updates
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFacultyMessageForm((prev) => ({
+                            ...prev,
+                            body: "Can we align on assessment timelines for this semester?",
+                          }))
+                        }
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm hover:bg-slate-50"
+                      >
+                        Align assessment timelines
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {selectedTeacherConversation.map((msg, idx) => (
+                      <article key={msg.id} className="space-y-2">
+                        <p className="px-2 text-xs text-slate-400">
+                          {idx === 0 ? new Date(msg.created_at).toLocaleString() : ""}
+                        </p>
+                        <div className="flex items-start gap-2.5">
+                        {selectedTeacher.profile_image_url ? (
+                          <img src={selectedTeacher.profile_image_url} alt={selectedTeacher.name} className="h-8 w-8 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+                            {selectedTeacherInitial}
+                          </div>
+                        )}
+                        <div className="max-w-[78%] rounded-2xl rounded-tl-md bg-white px-4 py-3 shadow-sm">
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{msg.body}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                        </div>
+                        </div>
+                      </article>
+                    ))}
                   </div>
                 )}
-                <form onSubmit={sendFacultyMessage} className="mt-4 space-y-3">
-                  <select
-                    name="recipient_id"
-                    value={facultyMessageForm.recipient_id}
-                    onChange={handleFacultyMessageInput}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2.5"
-                    required
-                  >
-                    <option value="" disabled>Select teacher</option>
-                    {teacherDirectory.map((teacher) => (
-                      <option key={teacher.id} value={teacher.id}>
-                        {teacher.name} ({teacher.email})
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    name="subject"
-                    value={facultyMessageForm.subject}
-                    onChange={handleFacultyMessageInput}
-                    placeholder="Subject"
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2.5"
-                    required
-                  />
+              </div>
+
+              <div ref={composeTeacherMessageRef} className="border-t border-slate-200 bg-white px-4 py-4">
+                <form
+                  onSubmit={(e) => {
+                    if (!selectedTeacher) return;
+                    sendFacultyMessage(e);
+                  }}
+                  className="flex items-end gap-2"
+                >
                   <textarea
                     name="body"
-                    rows={4}
+                    rows={1}
                     value={facultyMessageForm.body}
                     onChange={handleFacultyMessageInput}
-                    placeholder="Write your message..."
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2.5"
+                    placeholder={selectedTeacher ? "Type Your Message" : "Select a teacher first"}
+                    className="max-h-24 min-h-[46px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-base outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-100"
                     required
+                    disabled={!selectedTeacher}
                   />
-                  <button type="submit" className="rounded-xl bg-blue-600 text-white hover:bg-blue-700 px-4 py-2.5">
-                    Send
+                  <button
+                    type="button"
+                    aria-label="Voice message"
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-700"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
+                      <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Zm5-3a1 1 0 1 1 2 0 7 7 0 0 1-6 6.92V20h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.08A7 7 0 0 1 5 11a1 1 0 0 1 2 0 5 5 0 1 0 10 0Z" />
+                    </svg>
                   </button>
+                  <button
+                    type="submit"
+                    disabled={!selectedTeacher}
+                    aria-label="Send message"
+                    className={`flex h-10 w-10 items-center justify-center rounded-full ${
+                      selectedTeacher ? "bg-violet-500 text-white hover:bg-violet-600" : "cursor-not-allowed bg-slate-200 text-slate-500"
+                    }`}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
+                      <path d="M3.4 20.6a1 1 0 0 1-1.34-1.2l2.1-6.14a1 1 0 0 1 .7-.64L14.6 10 4.86 7.38a1 1 0 0 1-.7-.64l-2.1-6.14A1 1 0 0 1 3.4-.6l18 11a1 1 0 0 1 0 1.7l-18 9.5Z" />
+                    </svg>
+                  </button>
+                  <div ref={teacherMenuRef} className="relative">
+                    <button
+                      type="button"
+                      aria-label="More actions"
+                      onClick={() => setShowTeacherMenu((prev) => !prev)}
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-700"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
+                        <path d="M12 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm0 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+                      </svg>
+                    </button>
+                    {showTeacherMenu && (
+                      <div className="absolute bottom-12 right-0 z-30 w-56 rounded-2xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFacultyMessageForm((prev) => ({
+                              ...prev,
+                              body: "[Document] Please review the attached file.",
+                            }));
+                            setShowTeacherMenu(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-xl border border-emerald-400 px-3 py-2 text-left text-sm font-medium text-slate-100 hover:bg-slate-800"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-violet-400" aria-hidden="true">
+                            <path d="M7 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5a2 2 0 0 0-.59-1.41l-4.5-4.5A2 2 0 0 0 12.5 2H7Zm5 1.5V8a1 1 0 0 0 1 1h4.5L12 3.5Z" />
+                          </svg>
+                          Document
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFacultyMessageForm((prev) => ({
+                              ...prev,
+                              body: "[Photos & videos] Sharing media from class activities.",
+                            }));
+                            setShowTeacherMenu(false);
+                          }}
+                          className="mt-1.5 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-100 hover:bg-slate-800"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current text-sky-400" aria-hidden="true">
+                            <path d="M5 3a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5Zm14 12H8.83l2.58-3.22a1 1 0 0 1 1.54-.04L15 14.5l1.6-2a1 1 0 0 1 1.55.03L19 13.8V15ZM9 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM3 18a2 2 0 0 0 2 2h13a1 1 0 1 1 0 2H5a4 4 0 0 1-4-4v-1a1 1 0 1 1 2 0v1Z" />
+                          </svg>
+                          Photos & videos
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </form>
-
-                {facultyMessageFeedback && (
-                  <div className="mt-4 rounded-xl border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700">
-                    {facultyMessageFeedback}
-                  </div>
-                )}
-                {facultyMessageError && (
-                  <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {facultyMessageError}
-                  </div>
-                )}
+                {facultyMessageFeedback && <p className="mt-2 text-xs text-emerald-600">{facultyMessageFeedback}</p>}
+                {facultyMessageError && <p className="mt-2 text-xs text-red-600">{facultyMessageError}</p>}
               </div>
-            )}
+            </section>
 
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h4 className="text-base font-semibold text-slate-900">Messages from Teachers</h4>
-                  <p className="text-xs text-slate-500 mt-1">Direct faculty communication in one place.</p>
+            {showTeacherProfilePanel && selectedTeacher && (
+              <aside className="hidden min-h-0 flex-col border-l border-slate-200 bg-white xl:flex">
+                <div className="relative px-5 py-6 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowTeacherProfilePanel(false)}
+                    aria-label="Close profile panel"
+                    className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-lg text-slate-600 hover:bg-slate-200"
+                  >
+                    ×
+                  </button>
+                  {selectedTeacher.profile_image_url ? (
+                    <img
+                      src={selectedTeacher.profile_image_url}
+                      alt={selectedTeacher.name}
+                      className="mx-auto h-20 w-20 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-rose-100 text-2xl font-semibold text-rose-700">
+                      {selectedTeacherInitial}
+                    </div>
+                  )}
+                  <p className="mt-3 text-2xl font-semibold text-slate-900">{selectedTeacher.name}</p>
+                  <p className="mt-1 text-sm text-slate-500">{selectedTeacher.department || "Faculty"}</p>
+                  <div className="mt-4 flex items-center justify-center gap-2">
+                    <button type="button" className="rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                      Video
+                    </button>
+                    <button type="button" className="rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                      Call
+                    </button>
+                    <button type="button" className="rounded-full bg-indigo-100 px-3 py-2 text-xs font-semibold text-indigo-700">
+                      More
+                    </button>
+                  </div>
                 </div>
+
+                <div className="border-t border-slate-200 px-4 py-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-900">Shared Media</p>
+                    <button type="button" className="text-xs text-indigo-600">View All</button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="h-20 rounded-xl bg-gradient-to-br from-cyan-200 to-blue-300" />
+                    <div className="h-20 rounded-xl bg-gradient-to-br from-pink-200 to-violet-300" />
+                    <div className="h-20 rounded-xl bg-gradient-to-br from-emerald-200 to-teal-300" />
+                    <div className="h-20 rounded-xl bg-gradient-to-br from-amber-200 to-orange-300" />
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-200 px-4 py-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-900">Shared Files</p>
+                    <button type="button" className="text-xs text-indigo-600">View All</button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">How To Be An Expert</div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">Dont Worry, Be Happy</div>
+                    <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">Where's My Money?</div>
+                  </div>
+                </div>
+              </aside>
+            )}
+          </div>
+
+          {showTeacherAvatarPreview && selectedTeacher && (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-[2px]"
+              onClick={() => setShowTeacherAvatarPreview(false)}
+            >
+              <div
+                className="relative w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <button
                   type="button"
-                  onClick={loadFacultyPeerInbox}
-                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() => setShowTeacherAvatarPreview(false)}
+                  aria-label="Close avatar preview"
+                  className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
                 >
-                  Refresh
+                  ×
                 </button>
-              </div>
-
-              {loadingFacultyInbox ? (
-                <p className="text-sm text-slate-500 mt-4">Loading teacher messages...</p>
-              ) : facultyInbox.length === 0 ? (
-                <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
-                  No messages from teachers yet.
-                </div>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {facultyInbox.map((msg) => (
-                    <div key={msg.id} className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="text-sm font-semibold text-slate-900">{msg.subject}</p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        From {msg.sender_name} ({msg.sender_email}) | {new Date(msg.created_at).toLocaleString()}
-                      </p>
-                      <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{msg.body}</p>
+                <div className="pt-4 text-center">
+                  {selectedTeacher.profile_image_url ? (
+                    <img
+                      src={selectedTeacher.profile_image_url}
+                      alt={selectedTeacher.name}
+                      className="mx-auto h-64 w-64 rounded-2xl object-cover"
+                    />
+                  ) : (
+                    <div className="mx-auto flex h-64 w-64 items-center justify-center rounded-2xl bg-rose-100 text-6xl font-semibold text-rose-700">
+                      {selectedTeacherInitial}
                     </div>
-                  ))}
+                  )}
+                  <p className="mt-4 text-2xl font-semibold text-slate-900">{selectedTeacher.name}</p>
+                  <p className="text-sm text-slate-500">{selectedTeacher.department || "Faculty"}</p>
                 </div>
-              )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       );
     }
@@ -4054,4 +4414,5 @@ function FacultyDashboard({ onLogout }) {
 }
 
 export default FacultyDashboard;
+
 
