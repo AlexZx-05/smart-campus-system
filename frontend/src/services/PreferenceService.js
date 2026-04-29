@@ -333,6 +333,11 @@ const PreferenceService = {
     return response.data;
   },
 
+  getStudentClassroomPeople: async (classroomId) => {
+    const response = await API.get(`/student/classrooms/${classroomId}/people`);
+    return response.data;
+  },
+
   joinStudentClassroom: async (classroomId) => {
     const response = await API.post(`/student/classrooms/${classroomId}/join`);
     return response.data;

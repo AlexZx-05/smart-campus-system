@@ -1636,27 +1636,27 @@ function FacultyDashboard({ onLogout }) {
             emptyMessage="No faculty announcements yet."
           />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white via-indigo-50 to-blue-100/70 p-4 shadow-[0_18px_36px_-26px_rgba(79,70,229,0.38)]">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">My Classes Today</p>
               <p className="mt-2 text-2xl font-semibold text-slate-900">{todaySchedule.length}</p>
               <p className="mt-1 text-xs text-slate-500">Scheduled teaching slots</p>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-white via-cyan-50 to-sky-100/70 p-4 shadow-[0_18px_36px_-26px_rgba(8,145,178,0.35)]">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Running Campus Classes</p>
               <p className="mt-2 text-2xl font-semibold text-slate-900">{roomLiveStatus?.running_classes_count ?? 0}</p>
               <p className="mt-1 text-xs text-slate-500">
                 {roomLiveStatus?.day || now.toLocaleDateString("en-US", { weekday: "long" })}
               </p>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-100/70 p-4 shadow-[0_18px_36px_-26px_rgba(5,150,105,0.35)]">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Current Teaching Status</p>
               <p className="mt-2 text-base font-semibold text-slate-900">{activeMySlot ? "In Class" : "Available"}</p>
               <p className="mt-1 text-xs text-slate-500">
                 {activeMySlot ? `${activeMySlot.subject} | Room ${activeMySlot.room}` : "No active slot now"}
               </p>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-white via-amber-50 to-orange-100/70 p-4 shadow-[0_18px_36px_-26px_rgba(217,119,6,0.35)]">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Next Campus Slot</p>
               <p className="mt-2 text-base font-semibold text-slate-900">{roomLiveStatus?.next_slot_time || "-"}</p>
               <p className="mt-1 text-xs text-slate-500">
@@ -1665,11 +1665,11 @@ function FacultyDashboard({ onLogout }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50/45 p-6 shadow-[0_18px_38px_-28px_rgba(15,23,42,0.32)]">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Live Room Intelligence</h3>
+                  <h3 className="text-xl font-semibold tracking-tight text-slate-900">Live Room Intelligence</h3>
                   <p className="mt-1 text-sm text-slate-500">Who is teaching right now, in which room, and for which subject.</p>
                 </div>
                 <button
@@ -1679,7 +1679,7 @@ function FacultyDashboard({ onLogout }) {
                     loadFacultyTimetable();
                     loadInboxMessages();
                   }}
-                  className="rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                 >
                   Refresh Live Data
                 </button>
@@ -1698,7 +1698,7 @@ function FacultyDashboard({ onLogout }) {
                   {runningRoomClasses.map((roomItem) => {
                     const slot = roomItem.running_class;
                     return (
-                      <div key={`${roomItem.room}-${slot.id || slot.subject}`} className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                      <div key={`${roomItem.room}-${slot.id || slot.subject}`} className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="text-sm font-semibold text-blue-900">
                             Room {roomItem.room} | {slot.start_time} - {slot.end_time}
@@ -1720,10 +1720,10 @@ function FacultyDashboard({ onLogout }) {
               )}
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h4 className="text-base font-semibold text-slate-900">My Teaching Pulse</h4>
+            <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-violet-50/50 to-fuchsia-50/35 p-6 shadow-[0_18px_38px_-28px_rgba(76,29,149,0.3)]">
+              <h4 className="text-lg font-semibold tracking-tight text-slate-900">My Teaching Pulse</h4>
               <div className="mt-4 space-y-3">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Current Slot</p>
                   {activeMySlot ? (
                     <>
@@ -1737,7 +1737,7 @@ function FacultyDashboard({ onLogout }) {
                   )}
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Next Slot</p>
                   {nextMySlot ? (
                     <>
@@ -1755,21 +1755,21 @@ function FacultyDashboard({ onLogout }) {
                   <button
                     type="button"
                     onClick={() => setActivePage("my-timetable")}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                   >
                     Open My Timetable
                   </button>
                   <button
                     type="button"
                     onClick={() => setActivePage("all-classes")}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                   >
                     View All Classes
                   </button>
                   <button
                     type="button"
                     onClick={() => setActivePage("conflicts")}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                   >
                     Report Conflict
                   </button>
@@ -1778,8 +1778,8 @@ function FacultyDashboard({ onLogout }) {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h4 className="text-base font-semibold text-slate-900">Upcoming Classroom Queue</h4>
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-rose-50/45 to-orange-50/35 p-6 shadow-[0_18px_38px_-28px_rgba(190,24,93,0.28)]">
+            <h4 className="text-lg font-semibold tracking-tight text-slate-900">Upcoming Classroom Queue</h4>
             {loadingRoomLiveStatus ? (
               <p className="mt-4 text-sm text-slate-500">Loading upcoming classes...</p>
             ) : nextCampusClasses.length === 0 ? (
@@ -1787,7 +1787,7 @@ function FacultyDashboard({ onLogout }) {
             ) : (
               <div className="mt-4 space-y-2">
                 {nextCampusClasses.slice(0, 6).map((roomItem) => (
-                  <div key={`${roomItem.room}-${roomItem.next_class.id || roomItem.next_class.start_time}`} className="rounded-xl border border-slate-200 p-3">
+                  <div key={`${roomItem.room}-${roomItem.next_class.id || roomItem.next_class.start_time}`} className="rounded-xl border border-slate-200 bg-white/80 p-3">
                     <p className="text-sm font-semibold text-slate-900">
                       {roomItem.next_class.start_time} | Room {roomItem.room} | {roomItem.next_class.subject}
                     </p>
@@ -2525,8 +2525,8 @@ function FacultyDashboard({ onLogout }) {
                       </div>
                     </div>
 
-                    <div className="sticky top-[-1rem] z-20 -mx-4 border-b border-slate-200 bg-white/95 px-4 py-2 backdrop-blur md:top-[-1.5rem] md:-mx-6 md:px-6">
-                      <div ref={classroomTabsRef} className="flex flex-wrap items-center gap-2">
+                    <div className="sticky top-[-1rem] z-20 -mx-4 border-b border-slate-200 bg-white px-4 py-2 md:top-[-1.5rem] md:-mx-6 md:px-6">
+                      <div ref={classroomTabsRef} className="flex flex-wrap items-center gap-5">
                         {[
                           { key: "stream", label: "Stream" },
                           { key: "classwork", label: "Classwork" },
@@ -2537,13 +2537,16 @@ function FacultyDashboard({ onLogout }) {
                             key={tab.key}
                             type="button"
                             onClick={() => handleClassroomTabChange(tab.key)}
-                            className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                            className={`relative px-1 py-1.5 text-sm font-medium transition ${
                               selectedClassroomTab === tab.key
-                                ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
-                                : "text-slate-600 hover:bg-slate-100"
+                                ? "text-blue-700"
+                                : "text-slate-600 hover:text-slate-900"
                             }`}
                           >
                             {tab.label}
+                            {selectedClassroomTab === tab.key && (
+                              <span className="absolute inset-x-0 -bottom-[9px] h-[3px] rounded-full bg-blue-600" />
+                            )}
                           </button>
                         ))}
                       </div>

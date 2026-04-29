@@ -178,7 +178,7 @@ function Sidebar({
 }) {
   return (
     <aside
-      className={`h-screen bg-slate-950 text-slate-200 px-2.5 py-2 md:px-3 md:py-2.5 shrink-0 overflow-hidden border-r border-slate-800 transition-all duration-300 ${
+      className={`h-screen bg-slate-950 text-slate-200 px-2.5 py-2 md:px-3 md:py-2.5 shrink-0 overflow-hidden border-r border-slate-800 transition-all duration-300 flex flex-col ${
         isOpen ? "w-[272px]" : "w-[84px]"
       }`}
     >
@@ -206,7 +206,7 @@ function Sidebar({
         )}
       </div>
 
-      <nav className="scrollbar-hidden mt-2 overflow-y-auto h-[calc(100vh-92px)] pr-0.5">
+      <nav className="scrollbar-hidden mt-2 flex-1 min-h-0 overflow-y-auto pr-0.5">
         {items.map((item) => {
           const Icon = icons[item.key] || DashboardIcon;
           const isActive = activePage === item.key;

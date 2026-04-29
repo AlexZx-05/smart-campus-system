@@ -62,10 +62,10 @@
 }
 
 .announcement-ticker__track {
-  display: flex;
+  display: inline-flex;
   width: max-content;
-  gap: 2.5rem;
-  animation: announcement-marquee 38s linear infinite;
+  gap: 2.75rem;
+  animation: announcement-marquee 26s linear infinite;
   will-change: transform;
 }
 

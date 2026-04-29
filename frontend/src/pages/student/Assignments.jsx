@@ -112,12 +112,15 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
   });
   const [submitting, setSubmitting] = useState(false);
   const [activeClassroomTab, setActiveClassroomTab] = useState("invites");
+  const [classroomSearch, setClassroomSearch] = useState("");
   const [openMenuId, setOpenMenuId] = useState(null);
   const [selectedClassroom, setSelectedClassroom] = useState(null);
   const [classroomDetailTab, setClassroomDetailTab] = useState("stream");
   const [selectedClassroomThemeIndex, setSelectedClassroomThemeIndex] = useState(0);
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
   const [announcementText, setAnnouncementText] = useState("");
+  const [classroomPeople, setClassroomPeople] = useState([]);
+  const [loadingClassroomPeople, setLoadingClassroomPeople] = useState(false);
 
   const loadAssignments = async () => {
     setLoading(true);
@@ -209,6 +212,26 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     return () => clearTimeout(timer);
   }, [message]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadClassroomPeople = async () => {
+      if (!selectedClassroom?.id || classroomDetailTab !== "people") return;
+      setLoadingClassroomPeople(true);
+      try {
+        const data = await PreferenceService.getStudentClassroomPeople(selectedClassroom.id);
+        if (!cancelled) setClassroomPeople(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setClassroomPeople([]);
+      } finally {
+        if (!cancelled) setLoadingClassroomPeople(false);
+      }
+    };
+    loadClassroomPeople();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClassroom, classroomDetailTab]);
+
   const selectedAssignment = useMemo(
     () => assignments.find((item) => item.id === selectedAssignmentId) || null,
     [assignments, selectedAssignmentId]
@@ -221,6 +244,25 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     () => (joinedClassrooms.length > 0 ? joinedClassrooms : joinedClassroomDummy),
     [joinedClassrooms]
   );
+  const filteredClassroomCards = useMemo(() => {
+    const source = activeClassroomTab === "invites" ? inviteCards : joinedCards;
+    const q = classroomSearch.trim().toLowerCase();
+    if (!q) return source;
+    return source.filter((room) => {
+      const haystack = [
+        room.title,
+        room.subject,
+        room.faculty_name,
+        room.department,
+        room.section,
+        room.year ? `year ${room.year}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [activeClassroomTab, inviteCards, joinedCards, classroomSearch]);
 
   useEffect(() => {
     if (!selectedAssignment) return;
@@ -267,6 +309,24 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
       .join("");
   };
 
+  const getStableClassroomTheme = (room) => {
+    const key = String(room?.id ?? `${room?.title || ""}-${room?.subject || ""}`);
+    let hash = 0;
+    for (let i = 0; i < key.length; i += 1) {
+      hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+    }
+    return classroomThemePool[hash % classroomThemePool.length];
+  };
+
+  const getStableClassroomThemeIndex = (room) => {
+    const key = String(room?.id ?? `${room?.title || ""}-${room?.subject || ""}`);
+    let hash = 0;
+    for (let i = 0; i < key.length; i += 1) {
+      hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+    }
+    return hash % classroomDetailThemes.length;
+  };
+
   const openClassroomDetail = (room, themeIndex = 0) => {
     setSelectedClassroom(room);
     setSelectedClassroomThemeIndex(themeIndex % classroomDetailThemes.length);
@@ -274,6 +334,7 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     setOpenMenuId(null);
     setShowAnnouncementModal(false);
     setAnnouncementText("");
+    setClassroomPeople([]);
   };
 
   const detailRoom = selectedClassroom || null;
@@ -281,6 +342,48 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
   if (detailRoom) {
     const activeDetailTheme =
       classroomDetailThemes[selectedClassroomThemeIndex % classroomDetailThemes.length] || classroomDetailThemes[0];
+    const normalizeText = (value = "") => String(value || "").trim().toLowerCase();
+    const classroomAssignments = (assignments || []).filter((assignment) => {
+      const roomSubject = normalizeText(detailRoom.subject);
+      const roomTitle = normalizeText(detailRoom.title);
+      const roomFaculty = normalizeText(detailRoom.faculty_name);
+      const assignmentSubject = normalizeText(assignment.subject);
+      const assignmentFaculty = normalizeText(assignment.created_by_name);
+
+      if (roomSubject && assignmentSubject === roomSubject) return true;
+      if (roomFaculty && assignmentFaculty === roomFaculty && (!roomSubject || assignmentSubject.includes(roomSubject))) return true;
+      if (roomTitle && normalizeText(assignment.title).includes(roomTitle)) return true;
+      return false;
+    });
+    const classworkAssignments = classroomAssignments.length > 0 ? classroomAssignments : assignments || [];
+    const classworkFallback = [
+      {
+        id: "cw-demo-1",
+        title: `${detailRoom.subject || "Class"} Assignment-3`,
+        due_at: "2024-04-29T10:00:00",
+      },
+      {
+        id: "cw-demo-2",
+        title: `${detailRoom.subject || "Class"} Assignment-2`,
+        due_at: "2024-03-28T10:00:00",
+      },
+      {
+        id: "cw-demo-3",
+        title: `${detailRoom.subject || "Class"} Project Design details`,
+        due_at: "2024-04-29T10:00:00",
+      },
+    ];
+    const renderedClasswork = classworkAssignments.length > 0 ? classworkAssignments : classworkFallback;
+    const formatDueDate = (dueAt) => {
+      if (!dueAt) return "No due date";
+      const parsed = new Date(dueAt);
+      if (Number.isNaN(parsed.getTime())) return "No due date";
+      return `Due ${parsed.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })}`;
+    };
     const streamItems = [
       {
         id: "stream-1",
@@ -300,15 +403,18 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     ];
 
     return (
-      <div className="overflow-visible rounded-2xl shadow-[0_18px_48px_-32px_rgba(15,23,42,0.35)]">
-        <div className="sticky top-0 z-30 rounded-t-2xl border border-slate-200 border-b-slate-200/90 bg-white/95 px-4 backdrop-blur-md sm:px-7">
-          <div className="flex items-center gap-4">
+      <div className="-mx-4 -mt-4 overflow-hidden bg-white md:-mx-6 md:-mt-6">
+        <div className="sticky top-0 z-50 border-b border-slate-200 bg-white px-6 shadow-sm md:px-8">
+          <div className="mx-auto flex max-w-[1240px] items-center gap-5">
             <button
               type="button"
               onClick={() => setSelectedClassroom(null)}
-              className="py-4 text-sm font-medium text-slate-600 hover:text-slate-900"
+              className="-ml-1 inline-flex items-center gap-1.5 py-4 pr-1 text-[1.02rem] font-medium text-slate-600 transition hover:text-slate-900"
             >
-              Back
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+              <span>Back</span>
             </button>
             {[
               { key: "stream", label: "Stream" },
@@ -320,20 +426,22 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                 type="button"
                 onClick={() => setClassroomDetailTab(tab.key)}
                 className={`relative py-4 text-[1.02rem] font-medium transition ${
-                  classroomDetailTab === tab.key ? activeDetailTheme.tabActiveText : "text-slate-600 hover:text-slate-900"
+                  classroomDetailTab === tab.key ? "text-blue-700" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
                 {tab.label}
                 {classroomDetailTab === tab.key && (
-                  <span className={`absolute inset-x-0 -bottom-px h-[3px] rounded-full ${activeDetailTheme.tabUnderline}`} />
+                  <span className="absolute inset-x-0 -bottom-px h-[3px] rounded-full bg-blue-600" />
                 )}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="min-h-[680px] rounded-b-2xl border border-t-0 border-slate-200 bg-gradient-to-b from-slate-50 via-slate-50 to-slate-100">
-          <div className="mx-auto max-w-[1140px] space-y-5 px-4 pb-8 pt-4 sm:px-8 sm:pb-8 sm:pt-5">
+        <div className="bg-gradient-to-b from-slate-50 via-slate-50 to-slate-100 px-4 pb-10 pt-0 md:px-6">
+          <div className="mx-auto max-w-[1240px]">
+            <div className="min-h-[680px] rounded-[28px] border border-slate-200 bg-white/40 px-4 py-4 shadow-[0_20px_52px_-34px_rgba(15,23,42,0.22)] backdrop-blur-[2px] md:px-6 md:py-6">
+              <div className="mx-auto max-w-[1140px] space-y-5">
           {classroomDetailTab === "stream" && (
             <>
               <div className={`relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-r ${activeDetailTheme.hero} p-8 text-white shadow-[0_30px_70px_-36px_rgba(15,23,42,0.62)] sm:p-10`}>
@@ -383,33 +491,169 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
           )}
 
           {classroomDetailTab === "classwork" && (
-            <div className="space-y-3 rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.4)]">
-              <h4 className="text-2xl font-semibold text-slate-900">Classwork</h4>
-              {(assignments || []).slice(0, 6).map((assignment) => (
-                <div key={assignment.id} className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                  <p className="text-lg font-semibold text-slate-800">{assignment.title}</p>
-                  <p className="mt-1 text-sm text-slate-600">{assignment.subject}</p>
+            <div className="rounded-[28px] border border-slate-200/90 bg-white shadow-[0_24px_60px_-34px_rgba(15,23,42,0.2)]">
+              <div className="flex flex-col gap-5 border-b border-slate-200 px-6 py-6 lg:flex-row lg:items-start lg:justify-between">
+                <label className="block w-full max-w-[430px]">
+                  <span className={`ml-4 inline-flex bg-white px-2 text-[11px] font-semibold uppercase tracking-[0.28em] ${activeDetailTheme.tabActiveText}`}>
+                    Topic Filter
+                  </span>
+                  <button
+                    type="button"
+                    className={`-mt-2 flex w-full items-center justify-between rounded-2xl border-2 bg-white px-5 py-5 text-left text-[1.05rem] font-medium text-slate-800 shadow-sm transition hover:bg-slate-50 ${activeDetailTheme.tabUnderline.replace("bg-", "border-")}`}
+                  >
+                    <span>All topics</span>
+                    <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-500" fill="currentColor">
+                      <path d="m7 10 5 5 5-5" />
+                    </svg>
+                  </button>
+                </label>
+
+                <div className="flex flex-wrap items-center gap-4 pt-1">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-3 rounded-full border border-slate-300 bg-white px-5 py-3 text-[1.02rem] font-semibold text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
+                  >
+                    <svg viewBox="0 0 24 24" className={`h-5 w-5 ${activeDetailTheme.tabActiveText}`} fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7l-4-4H6a2 2 0 0 0-2 2v14Z" />
+                      <path d="M9 15h6M9 11h6M9 7h3" />
+                    </svg>
+                    View your work
+                  </button>
+                  <button
+                    type="button"
+                    className={`inline-flex items-center gap-2 text-[1.02rem] font-semibold transition ${activeDetailTheme.subtleBtn}`}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="m7 7 10 10M17 7 7 17" />
+                    </svg>
+                    Collapse all
+                  </button>
                 </div>
-              ))}
-              {assignments.length === 0 && <p className="text-sm text-slate-500">No classwork available yet.</p>}
+              </div>
+
+              <section className="px-6 pb-5 pt-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-5">
+                  <h4 className="text-[2.35rem] font-semibold tracking-tight text-slate-900">No topic</h4>
+                  <button
+                    type="button"
+                    className="rounded-full p-2.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="m6 14 6-6 6 6" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="divide-y divide-slate-200">
+                  {renderedClasswork.length > 0 ? (
+                    renderedClasswork.map((assignment) => (
+                      <article
+                        key={assignment.id}
+                        className="group flex items-center gap-4 py-5 transition"
+                      >
+                        <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full shadow-inner ${activeDetailTheme.iconWrap}`}>
+                          <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="5" y="4" width="14" height="16" rx="2.5" />
+                            <path d="M9 4.5h6M9 9.5h6M9 13.5h4" />
+                          </svg>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[1.16rem] font-medium leading-tight text-slate-900">
+                            {assignment.title || "Untitled assignment"}
+                          </p>
+                          <p className="mt-2 text-[1.02rem] text-slate-500">
+                            {assignment.subject || detailRoom.subject || "Classwork"}
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-[1.05rem] font-medium text-slate-700">
+                          {formatDueDate(assignment.due_at)}
+                        </p>
+                        <button
+                          type="button"
+                          className="rounded-full p-2 text-2xl text-slate-400 opacity-80 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
+                        >
+                          &#8942;
+                        </button>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="py-5 text-sm text-slate-500">No classwork available yet.</p>
+                  )}
+                </div>
+              </section>
             </div>
           )}
 
           {classroomDetailTab === "people" && (
-            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.4)]">
-              <h4 className="text-2xl font-semibold text-slate-900">People</h4>
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Teacher</p>
-                <p className="mt-2 text-lg font-semibold text-slate-800">{detailRoom.faculty_name || "Faculty Name"}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Class</p>
-                <p className="mt-2 text-sm text-slate-700">
-                  {[detailRoom.department, detailRoom.year ? `Year ${detailRoom.year}` : null, detailRoom.section].filter(Boolean).join(" | ") || "Academic classroom"}
-                </p>
-              </div>
+            <div className="rounded-[28px] border border-slate-200/90 bg-white shadow-[0_24px_60px_-34px_rgba(15,23,42,0.2)]">
+              <section className="border-b border-slate-200 px-6 py-5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[2.25rem] font-semibold tracking-tight text-slate-900">Teacher</h4>
+                  <span className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">1 mentor</span>
+                </div>
+                <div className="mt-5 flex items-center gap-4">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200">
+                    {detailRoom.faculty_profile_image_url ? (
+                      <img
+                        src={detailRoom.faculty_profile_image_url}
+                        alt={detailRoom.faculty_name || "Faculty"}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className={`flex h-full w-full items-center justify-center text-base font-semibold ${activeDetailTheme.iconWrap}`}>
+                        {getInitials(detailRoom.faculty_name)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-[1.1rem] font-medium text-slate-900">{detailRoom.faculty_name || "Faculty Name"}</p>
+                    <p className="mt-1 text-sm text-slate-500">{detailRoom.faculty_email || detailRoom.subject || "Teacher"}</p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="px-6 py-5">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-5">
+                  <h4 className="text-[2.25rem] font-semibold tracking-tight text-slate-900">Classmates</h4>
+                  <span className="text-base font-semibold text-slate-700">{classroomPeople.length} students</span>
+                </div>
+
+                <div className="divide-y divide-slate-200">
+                  {loadingClassroomPeople ? (
+                    <p className="py-5 text-sm text-slate-500">Loading classmates...</p>
+                  ) : classroomPeople.length > 0 ? (
+                    classroomPeople.map((person) => (
+                      <article key={person.id} className="flex items-center gap-4 py-5">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200">
+                          {person.student_profile_image_url ? (
+                            <img
+                              src={person.student_profile_image_url}
+                              alt={person.student_name || "Student"}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className={`flex h-full w-full items-center justify-center text-base font-semibold ${activeDetailTheme.iconWrap}`}>
+                              {getInitials(person.student_name)}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[1.06rem] font-medium text-slate-900">{person.student_name || "Student"}</p>
+                          <p className="mt-1 truncate text-sm text-slate-500">
+                            {person.student_email || [person.department, person.year ? `Year ${person.year}` : null, person.section].filter(Boolean).join(" | ")}
+                          </p>
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="py-5 text-sm text-slate-500">No classmates joined yet.</p>
+                  )}
+                </div>
+              </section>
             </div>
           )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -458,8 +702,9 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                       aria-label="Attach from Drive"
                     >
                       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M7 18h10l4-6-5-8H8L3 12l4 6Z" />
-                        <path d="M8 4l4 8m4-8-4 8M3 12h18" />
+                        <path d="M8.5 16.5h7L18.5 12l-3-4.5h-7L5.5 12l3 4.5Z" />
+                        <path d="M9.6 9.2h4.8" />
+                        <path d="M7.1 13h9.8" />
                       </svg>
                     </button>
                     <button
@@ -535,7 +780,26 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
             <h3 className="text-3xl font-semibold tracking-tight text-slate-900">Classrooms</h3>
             <p className="mt-1 text-sm text-slate-500">Teacher-created classrooms that you can join and use for assignments.</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className="relative">
+              <svg
+                viewBox="0 0 24 24"
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+              <input
+                type="text"
+                value={classroomSearch}
+                onChange={(e) => setClassroomSearch(e.target.value)}
+                placeholder="Search course"
+                className="w-[210px] rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
             <button
               type="button"
               onClick={loadAssignments}
@@ -571,14 +835,14 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
           </button>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {(activeClassroomTab === "invites" ? inviteCards : joinedCards).map((room, index) => {
-            const cardTheme = classroomThemePool[index % classroomThemePool.length];
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {filteredClassroomCards.map((room) => {
+            const cardTheme = getStableClassroomTheme(room);
             const isInviteTab = activeClassroomTab === "invites";
             return (
               <article
                 key={`${activeClassroomTab}-${room.id}`}
-                onClick={() => openClassroomDetail(room, index)}
+                onClick={() => openClassroomDetail(room, getStableClassroomThemeIndex(room))}
                 className="relative mx-auto w-full max-w-[340px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
               >
                 <div
@@ -639,7 +903,7 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openClassroomDetail(room, index);
+                          openClassroomDetail(room, getStableClassroomThemeIndex(room));
                         }}
                         className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                         aria-label="Open classroom"
@@ -654,7 +918,7 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openClassroomDetail(room, index);
+                          openClassroomDetail(room, getStableClassroomThemeIndex(room));
                         }}
                         className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
                         aria-label="Open classroom folder"
@@ -725,6 +989,11 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
             );
           })}
         </div>
+        {filteredClassroomCards.length === 0 && (
+          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+            No classrooms match your search.
+          </div>
+        )}
       </div>
 
       {reminders.length > 0 && (

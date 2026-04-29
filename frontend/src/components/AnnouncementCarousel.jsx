@@ -37,9 +37,25 @@ function AnnouncementCarousel({
   };
 
   const current = announcementItems[activeIndex];
-  const tickerText = current
-    ? `${current.subject} | By ${current.sender_name} | ${new Date(current.created_at).toLocaleString()} | ${current.body}`
-    : "";
+  const formatDateTime = (value) => {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "-";
+    return parsed.toLocaleString("en-IN", {
+      day: "numeric",
+      month: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+  };
+
+  const subjectText = current?.subject || "General Update";
+  const senderText = current?.sender_name || "Admin";
+  const timeText = formatDateTime(current?.created_at);
+  const bodyText = current?.body || "No additional details provided.";
+  const tickerText = current ? `${subjectText} | By ${senderText} | ${timeText} | ${bodyText}` : "";
 
   return (
     <div className="announcement-shell rounded-2xl border px-4 pt-2.5 pb-1.5">
@@ -72,7 +88,7 @@ function AnnouncementCarousel({
       ) : !current ? (
         <p className="mt-4 text-sm text-slate-500">{emptyMessage}</p>
       ) : (
-        <div className="mt-3">
+        <div className="mt-3 space-y-3">
           {announcementItems.length > 1 && (
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">

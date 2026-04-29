@@ -613,6 +613,26 @@ def _serialize_classroom(row):
     }
 
 
+def _serialize_classroom_member(row):
+    student = User.query.get(row.student_id)
+    student_image_url = None
+    if student and student.profile_image:
+        student_image_url = f"{request.host_url.rstrip('/')}{student.profile_image}"
+
+    return {
+        "id": row.id,
+        "student_id": row.student_id,
+        "student_name": student.name if student else "Student",
+        "student_email": student.email if student else None,
+        "student_profile_image_url": student_image_url,
+        "roll_number": student.roll_number if student else None,
+        "department": student.department if student else None,
+        "year": student.year if student else None,
+        "section": student.section if student else None,
+        "joined_at": row.joined_at.isoformat() if row.joined_at else None,
+    }
+
+
 def _is_classroom_targeted_to_student(classroom, student):
     if classroom.department and (student.department or "").strip().lower() != classroom.department.strip().lower():
         return False
@@ -2666,6 +2686,33 @@ def join_student_classroom(classroom_id):
 
     db.session.commit()
     return jsonify({"message": "Joined classroom successfully.", "data": _serialize_classroom(classroom)}), 201
+
+
+@preference_bp.route("/api/student/classrooms/<int:classroom_id>/people", methods=["GET"])
+@jwt_required()
+def get_student_classroom_people(classroom_id):
+    user = _get_current_user()
+    if not user or user.role != "student":
+        return jsonify({"message": "Forbidden"}), 403
+
+    classroom = Classroom.query.get(classroom_id)
+    if not classroom or not classroom.is_active:
+        return jsonify({"message": "Classroom not found"}), 404
+
+    membership = ClassroomMembership.query.filter(
+        ClassroomMembership.classroom_id == classroom_id,
+        ClassroomMembership.student_id == user.id,
+    ).first()
+    if not membership:
+        return jsonify({"message": "Forbidden"}), 403
+
+    rows = (
+        ClassroomMembership.query
+        .filter(ClassroomMembership.classroom_id == classroom_id)
+        .order_by(ClassroomMembership.joined_at.asc())
+        .all()
+    )
+    return jsonify([_serialize_classroom_member(row) for row in rows]), 200
 
 
 @preference_bp.route("/api/faculty/course-enrollments", methods=["GET"])

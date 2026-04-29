@@ -52,6 +52,8 @@ function StudentDashboard({ onLogout }) {
   const [announcementError, setAnnouncementError] = useState("");
   const [personalizedOverview, setPersonalizedOverview] = useState({
     todaySchedule: [],
+    todayEvents: [],
+    roomLiveStatus: null,
     upcomingDeadlines: [],
   });
   const [loadingPersonalizedOverview, setLoadingPersonalizedOverview] = useState(false);
@@ -88,13 +90,14 @@ function StudentDashboard({ onLogout }) {
   const loadPersonalizedOverview = async () => {
     setLoadingPersonalizedOverview(true);
     try {
-      const [myTimetableRes, instituteTimetableRes, assignmentsRes, calendarEvents, joinedClassroomsRes, courseEnrollmentsRes] = await Promise.all([
+      const [myTimetableRes, instituteTimetableRes, assignmentsRes, calendarEvents, joinedClassroomsRes, courseEnrollmentsRes, roomLiveStatusRes] = await Promise.all([
         PreferenceService.getStudentMyTimetable(),
         PreferenceService.getStudentInstituteTimetable(),
         PreferenceService.getStudentAssignments(),
         EventService.getEvents(),
         PreferenceService.getStudentJoinedClassrooms(),
         PreferenceService.getStudentCourseEnrollments(),
+        PreferenceService.getStudentRoomLiveStatus(),
       ]);
 
       const studentClass = {
@@ -113,9 +116,19 @@ function StudentDashboard({ onLogout }) {
       const effectiveSlots = mySlots.length > 0 ? mySlots : filteredInstituteSlots;
 
       const today = normalizeDay(new Date().toLocaleDateString("en-US", { weekday: "long" }));
+      const todayIso = new Date().toISOString().slice(0, 10);
       const todaySchedule = effectiveSlots
         .filter((slot) => normalizeDay(slot?.day) === today)
         .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+      const todayEvents = (Array.isArray(calendarEvents) ? calendarEvents : [])
+        .filter((event) => String(event?.date || "") === todayIso)
+        .map((event) => ({
+          id: event.id || `${event.date}-${event.title}`,
+          title: event.title || "Calendar Event",
+          description: event.description || "",
+          creator_name: event.creator_name || "",
+          creator_role: event.creator_role || "",
+        }));
 
       const joinedClassroomRows = Array.isArray(joinedClassroomsRes) ? joinedClassroomsRes : [];
       setJoinedClassrooms(joinedClassroomRows);
@@ -129,6 +142,8 @@ function StudentDashboard({ onLogout }) {
           ].join("|")
         )
       );
+      const joinedSubjects = new Set(joinedClassroomRows.map((row) => normalizeTextKey(row?.subject)).filter(Boolean));
+      const joinedSemesters = new Set(joinedClassroomRows.map((row) => String(row?.semester || "")).filter(Boolean));
 
       const now = Date.now();
       const upcomingDeadlines = (assignmentsRes || [])
@@ -138,13 +153,16 @@ function StudentDashboard({ onLogout }) {
             normalizeTextKey(row?.subject),
             String(row?.semester || ""),
           ].join("|");
-          return joinedClassroomKeys.has(key);
+          if (joinedClassroomKeys.has(key)) return true;
+          const subjectMatch = joinedSubjects.has(normalizeTextKey(row?.subject));
+          const semester = String(row?.semester || "");
+          const semesterMatch = joinedSemesters.size === 0 || joinedSemesters.has(semester);
+          return subjectMatch && semesterMatch;
         })
         .filter((row) => row?.due_at)
         .map((row) => ({ ...row, dueMs: new Date(row.due_at).getTime() }))
         .filter((row) => Number.isFinite(row.dueMs) && row.dueMs >= now)
-        .sort((a, b) => a.dueMs - b.dueMs)
-        .slice(0, 4);
+        .sort((a, b) => a.dueMs - b.dueMs);
 
       const todayDate = new Date();
       todayDate.setHours(0, 0, 0, 0);
@@ -162,11 +180,15 @@ function StudentDashboard({ onLogout }) {
 
       setPersonalizedOverview({
         todaySchedule,
+        todayEvents,
+        roomLiveStatus: roomLiveStatusRes || null,
         upcomingDeadlines,
       });
     } catch (err) {
       setPersonalizedOverview({
         todaySchedule: [],
+        todayEvents: [],
+        roomLiveStatus: null,
         upcomingDeadlines: [],
       });
       setUpcomingExamCount(0);
@@ -219,15 +241,11 @@ function StudentDashboard({ onLogout }) {
   const sidebarItems = [
     { key: "dashboard", label: "Dashboard" },
     { key: "timetable", label: "Timetable" },
-    { key: "institute-timetable", label: "Institute Timetable" },
     { key: "rooms", label: "Room Availability" },
     { key: "notifications", label: "Notifications" },
-    { key: "assignments", label: "Assignments" },
+    { key: "assignments", label: "Classrooms" },
     { key: "progress", label: "Academic Progress" },
     { key: "queries", label: "Doubts / Queries" },
-    { key: "attendance-details", label: "Attendance Details" },
-    { key: "credits-details", label: "Credits Details" },
-    { key: "my-exams", label: "My Exams" },
     { key: "calendar", label: "Calendar" },
     { key: "profile", label: "Profile" },
     { key: "settings", label: "Settings" },
@@ -239,7 +257,7 @@ function StudentDashboard({ onLogout }) {
     "institute-timetable": "Institute Timetable",
     rooms: "Room Availability",
     notifications: "Notifications",
-    assignments: "Assignments",
+    assignments: "Classrooms",
     progress: "Academic Progress",
     queries: "Doubts / Queries",
     "attendance-details": "Attendance Details",
@@ -298,7 +316,7 @@ function StudentDashboard({ onLogout }) {
           />
         );
       case "progress":
-        return <AcademicProgress />;
+        return <AcademicProgress onOpenAttendance={() => setActivePage("attendance-details")} />;
       case "queries":
         return <Queries />;
       case "my-exams":

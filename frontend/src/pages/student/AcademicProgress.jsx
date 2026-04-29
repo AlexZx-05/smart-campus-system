@@ -3,7 +3,7 @@ import PreferenceService from "../../services/PreferenceService";
 import DashboardService from "../../services/DashboardService";
 import Card from "../../components/Card";
 
-function AcademicProgress() {
+function AcademicProgress({ onOpenAttendance }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [attendance, setAttendance] = useState(null);
@@ -187,54 +187,64 @@ function AcademicProgress() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_36px_-28px_rgba(15,23,42,0.35)]">
+        <div className="bg-gradient-to-r from-slate-50 via-white to-indigo-50/55 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold text-slate-800">Academic Progress</h3>
-            <p className="text-sm text-slate-500 mt-1">
+            <h3 className="text-2xl font-semibold tracking-tight text-slate-900">Academic Progress</h3>
+            <p className="mt-1 text-sm text-slate-600">
               Your details sent by different teachers: grades, feedback, attendance summary, and CGPA estimate.
             </p>
           </div>
           <button
             onClick={loadProgress}
-            className="rounded-lg bg-blue-600 text-white text-sm px-3 py-2 hover:bg-blue-700"
+            className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
           >
             Refresh
           </button>
+        </div>
         </div>
       </div>
 
       {error && <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <Card title="Attendance" value={attendance !== null ? `${attendance}%` : "-"} subtitle="Current semester" />
-        <Card title="Estimated CGPA" value={cgpaEstimate !== null ? cgpaEstimate.toFixed(2) : "-"} subtitle="From reviewed grades" />
-        <Card title="Reviewed Items" value={String(reviewCount)} subtitle="Teacher-reviewed submissions" />
-        <Card title="Teachers Reporting" value={String(teachersWithUpdates)} subtitle="Distinct teachers with updates" />
+        <Card
+          title="Attendance"
+          value={attendance !== null ? `${attendance}%` : "-"}
+          subtitle="Current semester"
+          onClick={onOpenAttendance}
+          className="border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-100/70 shadow-[0_18px_36px_-26px_rgba(5,150,105,0.42)]"
+        />
+        <Card title="Estimated CGPA" value={cgpaEstimate !== null ? cgpaEstimate.toFixed(2) : "-"} subtitle="From reviewed grades" className="border-indigo-200 bg-gradient-to-br from-white via-indigo-50 to-blue-100/70 shadow-[0_18px_36px_-26px_rgba(79,70,229,0.35)]" />
+        <Card title="Reviewed Items" value={String(reviewCount)} subtitle="Teacher-reviewed submissions" className="border-amber-200 bg-gradient-to-br from-white via-amber-50 to-orange-100/65 shadow-[0_18px_36px_-26px_rgba(217,119,6,0.35)]" />
+        <Card title="Teachers Reporting" value={String(teachersWithUpdates)} subtitle="Distinct teachers with updates" className="border-sky-200 bg-gradient-to-br from-white via-sky-50 to-cyan-100/70 shadow-[0_18px_36px_-26px_rgba(14,116,144,0.35)]" />
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-        <h4 className="text-base font-semibold text-slate-800">Teacher-wise Academic Details</h4>
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_16px_36px_-28px_rgba(15,23,42,0.35)]">
+        <h4 className="text-xl font-semibold tracking-tight text-slate-900">Teacher-wise Academic Details</h4>
         {loading ? (
           <p className="mt-3 text-sm text-slate-500">Loading your academic details...</p>
         ) : teacherRows.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">No academic details shared by teachers yet.</p>
+          <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+            No academic details shared by teachers yet.
+          </div>
         ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden">
+          <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+            <table className="min-w-full overflow-hidden">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Teacher</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Subject</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Semester</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Latest Grade</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Reviewed</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Teacher Feedback</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Teacher</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Subject</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Semester</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Latest Grade</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Reviewed</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Teacher Feedback</th>
                 </tr>
               </thead>
               <tbody>
                 {teacherRows.map((row) => (
-                  <tr key={row.key} className="border-t border-slate-200">
+                  <tr key={row.key} className="border-t border-slate-200 odd:bg-white even:bg-slate-50/40 hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 text-sm text-slate-800">{row.faculty_name}</td>
                     <td className="px-4 py-3 text-sm text-slate-700">{row.subject}</td>
                     <td className="px-4 py-3 text-sm text-slate-700">{row.semester}</td>
@@ -252,25 +262,27 @@ function AcademicProgress() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-          <h4 className="text-base font-semibold text-slate-800">Past Performance Trend (Semester-wise)</h4>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_16px_36px_-28px_rgba(15,23,42,0.35)]">
+          <h4 className="text-xl font-semibold tracking-tight text-slate-900">Past Performance Trend (Semester-wise)</h4>
           {loading ? (
             <p className="mt-3 text-sm text-slate-500">Loading trend...</p>
           ) : semesterTrend.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">No past trend available yet.</p>
+            <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+              No past trend available yet.
+            </div>
           ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden">
+            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full overflow-hidden">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Semester</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Reviewed Items</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Avg Grade Point</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Semester</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Reviewed Items</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">Avg Grade Point</th>
                   </tr>
                 </thead>
                 <tbody>
                   {semesterTrend.map((row) => (
-                    <tr key={row.semester} className="border-t border-slate-200">
+                    <tr key={row.semester} className="border-t border-slate-200 odd:bg-white even:bg-slate-50/40 hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3 text-sm text-slate-800">{row.semester}</td>
                       <td className="px-4 py-3 text-sm text-slate-700">{row.reviewed_count}</td>
                       <td className="px-4 py-3 text-sm text-slate-700">
@@ -284,16 +296,18 @@ function AcademicProgress() {
           )}
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-          <h4 className="text-base font-semibold text-slate-800">Past Performance History</h4>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_16px_36px_-28px_rgba(15,23,42,0.35)]">
+          <h4 className="text-xl font-semibold tracking-tight text-slate-900">Past Performance History</h4>
           {loading ? (
             <p className="mt-3 text-sm text-slate-500">Loading history...</p>
           ) : reviewHistory.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">No reviewed history yet.</p>
+            <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+              No reviewed history yet.
+            </div>
           ) : (
-            <div className="mt-4 space-y-3 max-h-[28rem] overflow-auto pr-1">
+            <div className="mt-3 space-y-3 max-h-[28rem] overflow-auto pr-1">
               {reviewHistory.map((row) => (
-                <div key={`${row.id}-${row.reviewed_at || "no-date"}`} className="rounded-lg border border-slate-200 p-3">
+                <div key={`${row.id}-${row.reviewed_at || "no-date"}`} className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-slate-50 p-3">
                   <p className="text-sm font-semibold text-slate-800">{row.title}</p>
                   <p className="text-xs text-slate-500 mt-1">
                     {row.subject} | {row.semester} | {row.faculty_name}
