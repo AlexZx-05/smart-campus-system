@@ -191,6 +191,7 @@ function CalendarPage({ viewerRole = "student" }) {
       )
       .sort((a, b) => a.eventMs - b.eventMs);
   }, [mergedEvents, todayIso]);
+  const sidebarUpcoming = useMemo(() => upcomingHolidays.slice(0, 5), [upcomingHolidays]);
 
   const gridCells = useMemo(() => {
     const firstOfMonth = new Date(calendarYear, calendarMonth - 1, 1);
@@ -315,8 +316,8 @@ function CalendarPage({ viewerRole = "student" }) {
         </div>
       )}
 
-      <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 xl:col-span-8">
+      <section className="grid grid-cols-1 gap-3 xl:grid-cols-12">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 xl:col-span-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-2xl font-semibold tracking-tight text-slate-900">{monthLabel}</h3>
@@ -365,15 +366,15 @@ function CalendarPage({ viewerRole = "student" }) {
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-7 overflow-hidden rounded-full bg-sky-600 text-center text-xs font-medium text-white">
+          <div className="mt-3 grid grid-cols-7 overflow-hidden rounded-full bg-sky-600 text-center text-xs font-medium text-white">
             {WEEK_DAYS.map((day) => (
-              <div key={day} className="py-2.5">
+              <div key={day} className="py-2">
                 {day}
               </div>
             ))}
           </div>
 
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-3 overflow-x-auto">
             {loadingCalendar ? (
               <p className="py-8 text-sm text-slate-500">Loading calendar...</p>
             ) : (
@@ -388,7 +389,7 @@ function CalendarPage({ viewerRole = "student" }) {
                         type="button"
                         key={cell.key}
                         onClick={() => setSelectedDate(cell.isoDate)}
-                        className={`min-h-[92px] border-r border-b border-slate-200 p-2.5 text-left transition ${
+                        className={`min-h-[74px] border-r border-b border-slate-200 p-1.5 text-left transition ${
                           cell.inCurrentMonth ? "bg-white" : "bg-slate-50"
                         } ${isSelected ? "bg-sky-100/70" : "hover:bg-sky-50/70"}`}
                       >
@@ -396,7 +397,7 @@ function CalendarPage({ viewerRole = "student" }) {
                         {cell.isToday && <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-sky-500" />}
                         {previewEvent && (
                           <div
-                            className={`mt-1 rounded-r border-l-[3px] px-1.5 py-1 ${
+                            className={`mt-1 rounded-r border-l-[3px] px-1.5 py-0.5 ${
                               celebrationEvent
                                 ? "border-blue-500 bg-blue-50"
                                 : "border-sky-500 bg-sky-50"
@@ -418,9 +419,9 @@ function CalendarPage({ viewerRole = "student" }) {
           </div>
         </div>
 
-        <aside className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 xl:col-span-4 xl:h-[760px]">
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="flex basis-[65%] min-h-0 flex-col">
+        <aside className="rounded-2xl border border-slate-200 bg-white p-4 xl:col-span-4">
+          <div className="space-y-3">
+            <div className="flex min-h-0 flex-col">
               <div className="flex items-center justify-between">
                 <h4 className="text-base font-semibold text-slate-900">Upcoming Holidays</h4>
                 <button
@@ -431,16 +432,16 @@ function CalendarPage({ viewerRole = "student" }) {
                   Refresh
                 </button>
               </div>
-              <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="mt-3">
                 {loadingSidebar ? (
                   <p className="text-sm text-slate-500">Loading upcoming holidays...</p>
-                ) : upcomingHolidays.length === 0 ? (
+                ) : sidebarUpcoming.length === 0 ? (
                   <p className="text-sm text-slate-500">
                     {loadingHolidays ? "Loading government holidays..." : "No upcoming holidays available."}
                   </p>
                 ) : (
                   <div className="space-y-2.5">
-                    {upcomingHolidays.map((event) => (
+                    {sidebarUpcoming.map((event) => (
                       <button
                         type="button"
                         key={event.id}
@@ -473,9 +474,9 @@ function CalendarPage({ viewerRole = "student" }) {
               </div>
             </div>
 
-            <div className="mt-4 flex basis-[35%] min-h-0 flex-col border-t border-slate-200 pt-4">
+            <div className="flex min-h-0 flex-col border-t border-slate-200 pt-4">
               <h4 className="text-base font-semibold text-slate-900">Events on {formatDateLabel(selectedDate)}</h4>
-              <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="mt-3">
                 {loadingSidebar ? (
                   <p className="text-sm text-slate-500">Loading...</p>
                 ) : selectedDayEvents.length === 0 ? (

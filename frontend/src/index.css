@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 @keyframes fadein {
   from {
     opacity: 0;
@@ -10,5 +20,84 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes announcement-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.announcement-ticker {
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  border-radius: 0.7rem;
+  border: 1px solid #d6e4f7;
+  background: linear-gradient(100deg, #f8fbff 0%, #f2f7ff 48%, #eef4ff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  padding: 0.32rem 0;
+}
+
+.announcement-shell {
+  border-color: #bfd5f2;
+  background:
+    radial-gradient(circle at 11% 15%, rgba(186, 230, 253, 0.2) 0%, rgba(186, 230, 253, 0) 40%),
+    linear-gradient(125deg, #eaf4ff 0%, #f4f8ff 52%, #eef4ff 100%);
+  box-shadow: 0 10px 28px -20px rgba(37, 99, 235, 0.38);
+}
+
+.announcement-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.1rem;
+  min-height: 2.1rem;
+  padding: 0.15rem 0;
+}
+
+.announcement-ticker__track {
+  display: flex;
+  width: max-content;
+  gap: 2.5rem;
+  animation: announcement-marquee 38s linear infinite;
+  will-change: transform;
+}
+
+.announcement-ticker__content {
+  display: block;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0 1.15rem;
+  font-size: 0.92rem;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+.announcement-ticker__track.is-paused {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .announcement-ticker__track {
+    animation: none;
+    display: block;
+    width: auto;
+  }
+
+  .announcement-ticker__content {
+    white-space: normal;
+    display: block;
+    padding: 0 1rem;
+  }
+
+  .announcement-ticker__content + .announcement-ticker__content {
+    display: none;
   }
 }

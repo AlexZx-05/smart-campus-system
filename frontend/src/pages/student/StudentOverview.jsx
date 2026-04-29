@@ -10,6 +10,13 @@ function StudentOverview({
   onRefreshAnnouncements,
   personalizedOverview = { todaySchedule: [], upcomingDeadlines: [] },
   loadingPersonalizedOverview = false,
+  onOpenNotifications,
+  onOpenExams,
+  onOpenAttendance,
+  onOpenCredits,
+  upcomingExamCount = 0,
+  joinedClassrooms = [],
+  courseEnrollments = [],
   settings = {
     emailNotifications: true,
     examAlerts: true,
@@ -40,6 +47,7 @@ function StudentOverview({
   const cardGap = settings.dashboardDensity === "compact" ? "gap-3" : "gap-4";
   const cardPadding = settings.dashboardDensity === "compact" ? "p-4" : "p-5";
   const effectiveAnnouncementCount = settings.emailNotifications ? announcements.length : 0;
+  const computedCredits = (courseEnrollments?.length || 0) * 4;
 
   if (loading) {
     return (
@@ -47,7 +55,7 @@ function StudentOverview({
         {[1, 2, 3, 4].map((i) => (
           <div
             key={i}
-            className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 animate-pulse h-28"
+            className="rounded-xl border border-sky-100 bg-gradient-to-br from-white via-sky-50/55 to-blue-50/70 shadow-[0_8px_24px_-20px_rgba(30,64,175,0.45)] p-5 animate-pulse h-28"
           />
         ))}
       </div>
@@ -60,27 +68,45 @@ function StudentOverview({
         messages={announcements}
         loading={loadingAnnouncements}
         error={announcementError}
-        title="Announcement Banner"
-        subtitle="Important updates from admin for students."
+        title="Announcement"
+        subtitle=""
         emptyMessage="No student announcements yet."
-        onRefresh={onRefreshAnnouncements}
       />
 
       <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 ${cardGap}`}>
         {settings.showAttendanceWidget && (
-          <Card title="Attendance" value={`${data?.attendance_percentage ?? 0}%`} subtitle="Current semester" />
+          <Card
+            title="Attendance"
+            value={`${data?.attendance_percentage ?? 0}%`}
+            subtitle="Current semester (click for details)"
+            onClick={onOpenAttendance}
+            className="border-emerald-100 bg-gradient-to-br from-white via-emerald-50/70 to-teal-50 shadow-[0_8px_24px_-20px_rgba(5,150,105,0.4)]"
+          />
         )}
-        <Card title="Credits Completed" value="96" subtitle="Out of 160" />
-        <Card title="Classes Today" value={String(todaySchedule.length || 0)} subtitle="From your timetable" />
+        <Card
+          title="Credits Completed"
+          value={String(computedCredits)}
+          subtitle="Out of 160 (click for semester-wise details)"
+          onClick={onOpenCredits}
+          className="border-lime-100 bg-gradient-to-br from-white via-lime-50/70 to-green-50 shadow-[0_8px_24px_-20px_rgba(101,163,13,0.35)]"
+        />
+        <Card
+          title="Classes Today"
+          value={String(todaySchedule.length || 0)}
+          subtitle="From your timetable"
+          className="border-yellow-100 bg-gradient-to-br from-white via-amber-50/70 to-yellow-50 shadow-[0_8px_24px_-20px_rgba(202,138,4,0.35)]"
+        />
         <Card
           title="Unread Notifications"
           value={String(effectiveAnnouncementCount)}
           subtitle={settings.emailNotifications ? "In your inbox" : "Disabled by settings"}
+          onClick={onOpenNotifications}
+          className="border-teal-100 bg-gradient-to-br from-white via-teal-50/70 to-cyan-50 shadow-[0_8px_24px_-20px_rgba(13,148,136,0.35)]"
         />
       </div>
 
       <div className={`grid grid-cols-1 xl:grid-cols-3 ${cardGap}`}>
-        <div className={`xl:col-span-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm ${cardPadding} transition-colors`}>
+        <div className={`xl:col-span-2 rounded-xl border border-emerald-100 bg-gradient-to-br from-white via-emerald-50/55 to-teal-50/60 shadow-[0_8px_24px_-20px_rgba(5,150,105,0.35)] ${cardPadding} transition-colors`}>
           <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Today&apos;s Schedule</h3>
           {loadingPersonalizedOverview ? (
             <p className="text-sm text-slate-500 mt-4">Loading your schedule...</p>
@@ -122,23 +148,21 @@ function StudentOverview({
         </div>
 
         <div className={settings.dashboardDensity === "compact" ? "space-y-3" : "space-y-4"}>
-          <div className={`bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm ${cardPadding} transition-colors`}>
-            <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Upcoming Exams</h3>
-            <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 mt-2">
-              {settings.examAlerts ? data?.upcoming_exams ?? 0 : 0}
-            </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              {settings.examAlerts ? "As per your dashboard data" : "Disabled by settings"}
-            </p>
-          </div>
-          <div className={`bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm ${cardPadding} transition-colors`}>
+          <Card
+            title="Upcoming Exams"
+            value={String(settings.examAlerts ? upcomingExamCount : 0)}
+            subtitle={settings.examAlerts ? "From teacher calendar events" : "Disabled by settings"}
+            onClick={onOpenExams}
+            className={`border-lime-100 bg-gradient-to-br from-white via-lime-50/60 to-yellow-50/45 shadow-[0_8px_24px_-20px_rgba(101,163,13,0.35)] ${cardPadding}`}
+          />
+          <div className={`rounded-xl border border-teal-100 bg-gradient-to-br from-white via-teal-50/55 to-emerald-50/50 shadow-[0_8px_24px_-20px_rgba(13,148,136,0.35)] ${cardPadding} transition-colors`}>
             <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">Assignment Deadlines</h3>
             {!settings.assignmentReminders ? (
               <p className="text-sm text-slate-500 mt-3">Disabled by settings.</p>
             ) : loadingPersonalizedOverview ? (
               <p className="text-sm text-slate-500 mt-3">Loading deadlines...</p>
             ) : upcomingDeadlines.length === 0 ? (
-              <p className="text-sm text-slate-500 mt-3">No upcoming assignment deadlines.</p>
+              <p className="text-sm text-slate-500 mt-3">No upcoming deadlines from joined classrooms.</p>
             ) : (
               <ul className="mt-3 text-sm text-slate-700 dark:text-slate-300 space-y-2">
                 {upcomingDeadlines.map((item) => (

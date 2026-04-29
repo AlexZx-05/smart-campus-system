@@ -178,16 +178,16 @@ function Sidebar({
 }) {
   return (
     <aside
-      className={`h-screen bg-slate-950 text-slate-200 p-3 md:p-4 shrink-0 overflow-y-auto border-r border-slate-800 transition-all duration-300 ${
+      className={`h-screen bg-slate-950 text-slate-200 px-2.5 py-2 md:px-3 md:py-2.5 shrink-0 overflow-hidden border-r border-slate-800 transition-all duration-300 ${
         isOpen ? "w-[272px]" : "w-[84px]"
       }`}
     >
-      <div className={`px-1 py-3 ${isOpen ? "" : "flex flex-col items-center"}`}>
+      <div className={`px-1 py-1 ${isOpen ? "" : "flex flex-col items-center"}`}>
         <button
           type="button"
           onClick={onToggle}
           className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-slate-500 hover:bg-slate-800 transition-colors ${
-            isOpen ? "" : "mb-4"
+            isOpen ? "" : "mb-2"
           }`}
           aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
         >
@@ -197,16 +197,16 @@ function Sidebar({
         </button>
 
         {isOpen ? (
-          <div className="mt-4">
+          <div className="mt-2">
             <h2 className="text-xl font-bold text-white tracking-tight leading-tight">Smart Campus</h2>
             <p className="text-xs text-slate-400 mt-1 tracking-wide">{portalLabel}</p>
           </div>
         ) : (
-          <div className="h-10 w-10" />
+          <div className="h-2 w-2" />
         )}
       </div>
 
-      <nav className="mt-4 space-y-1.5">
+      <nav className="scrollbar-hidden mt-2 overflow-y-auto h-[calc(100vh-92px)] pr-0.5">
         {items.map((item) => {
           const Icon = icons[item.key] || DashboardIcon;
           const isActive = activePage === item.key;
@@ -220,9 +220,9 @@ function Sidebar({
                 isActive
                   ? "bg-slate-800 border border-slate-700 text-white shadow-md"
                   : "text-slate-300 hover:text-white hover:bg-slate-900"
-              }`}
+              } ${isOpen ? "mb-1.5" : "mb-3.5"}`}
             >
-              <span className={`inline-flex h-11 items-center ${isOpen ? "w-11 ml-1 justify-center" : "w-full justify-center"}`}>
+              <span className={`inline-flex items-center ${isOpen ? "h-10 w-10 ml-1 justify-center" : "h-11 w-full justify-center"}`}>
                 <Icon />
               </span>
               {isOpen && <span className="pr-3 truncate font-medium">{item.label}</span>}
@@ -231,11 +231,7 @@ function Sidebar({
         })}
       </nav>
 
-      {!isOpen && (
-        <div className="hidden md:flex mt-8 justify-center">
-          <div className="h-1.5 w-8 rounded-full bg-slate-700" />
-        </div>
-      )}
+      {!isOpen && <div className="hidden md:block h-2" />}
     </aside>
   );
 }

@@ -1627,6 +1627,15 @@ function FacultyDashboard({ onLogout }) {
 
       return (
         <div className="space-y-5">
+          <AnnouncementCarousel
+            messages={inboxMessages}
+            loading={loadingInboxMessages}
+            error={inboxError}
+            title="Announcement"
+            subtitle=""
+            emptyMessage="No faculty announcements yet."
+          />
+
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">My Classes Today</p>
@@ -1768,19 +1777,6 @@ function FacultyDashboard({ onLogout }) {
               </div>
             </div>
           </div>
-
-          <AnnouncementCarousel
-            messages={inboxMessages}
-            loading={loadingInboxMessages}
-            error={inboxError}
-            title="Announcement Banner"
-            subtitle="Important updates from admin for faculty."
-            emptyMessage="No faculty announcements yet."
-            onRefresh={() => {
-              loadInboxMessages();
-              loadFacultyRoomLiveStatus();
-            }}
-          />
 
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h4 className="text-base font-semibold text-slate-900">Upcoming Classroom Queue</h4>
@@ -2711,7 +2707,11 @@ function FacultyDashboard({ onLogout }) {
                       </a>
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard?.writeText(selectedClassroom.join_link || "")}
+                        onClick={() => {
+                          const joinUrl = `${window.location.origin}/?joinClassroomId=${selectedClassroom.id}`;
+                          navigator.clipboard?.writeText(joinUrl);
+                          setAssignmentMessage("Classroom join link copied. Share it with eligible students.");
+                        }}
                         className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
                       >
                         <span>Copy class link</span>

@@ -11,8 +11,12 @@ import Queries from "./Queries";
 import CalendarPage from "./CalendarPage";
 import Profile from "./Profile";
 import Settings from "./Settings";
+import ExamSchedule from "./ExamSchedule";
+import AttendanceDetails from "./AttendanceDetails";
+import CreditsDetails from "./CreditsDetails";
 import StudentService from "../../services/StudentService";
 import PreferenceService from "../../services/PreferenceService";
+import EventService from "../../services/EventService";
 
 const defaultStudentSettings = {
   emailNotifications: true,
@@ -52,6 +56,19 @@ function StudentDashboard({ onLogout }) {
   });
   const [loadingPersonalizedOverview, setLoadingPersonalizedOverview] = useState(false);
   const [studentSettings, setStudentSettings] = useState(defaultStudentSettings);
+  const [upcomingExamCount, setUpcomingExamCount] = useState(0);
+  const [upcomingExamEvents, setUpcomingExamEvents] = useState([]);
+  const [joinedClassrooms, setJoinedClassrooms] = useState([]);
+  const [courseEnrollments, setCourseEnrollments] = useState([]);
+  const [pendingJoinClassroomId, setPendingJoinClassroomId] = useState(null);
+
+  const normalizeTextKey = (value) => (value || "").trim().toLowerCase();
+  const normalizeDay = (value) => (value || "").trim().toLowerCase();
+
+  const isExamCalendarEvent = (event) => {
+    const text = `${event?.title || ""} ${event?.description || ""}`.toLowerCase();
+    return /\b(exam|mid\s*term|midterm|end\s*term|endterm|quiz|test|viva|practical)\b/.test(text);
+  };
 
   const loadDashboardAnnouncements = async () => {
     setLoadingAnnouncements(true);
@@ -71,23 +88,77 @@ function StudentDashboard({ onLogout }) {
   const loadPersonalizedOverview = async () => {
     setLoadingPersonalizedOverview(true);
     try {
-      const [myTimetableRes, assignmentsRes] = await Promise.all([
+      const [myTimetableRes, instituteTimetableRes, assignmentsRes, calendarEvents, joinedClassroomsRes, courseEnrollmentsRes] = await Promise.all([
         PreferenceService.getStudentMyTimetable(),
+        PreferenceService.getStudentInstituteTimetable(),
         PreferenceService.getStudentAssignments(),
+        EventService.getEvents(),
+        PreferenceService.getStudentJoinedClassrooms(),
+        PreferenceService.getStudentCourseEnrollments(),
       ]);
 
-      const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
-      const todaySchedule = (myTimetableRes?.timetable || [])
-        .filter((slot) => slot.day === today)
+      const studentClass = {
+        department: normalizeTextKey(myTimetableRes?.student?.department),
+        year: String(myTimetableRes?.student?.year || ""),
+        section: normalizeTextKey(myTimetableRes?.student?.section),
+      };
+      const mySlots = Array.isArray(myTimetableRes?.timetable) ? myTimetableRes.timetable : [];
+      const instituteSlots = Array.isArray(instituteTimetableRes) ? instituteTimetableRes : [];
+      const filteredInstituteSlots = instituteSlots.filter((slot) => {
+        const deptOk = normalizeTextKey(slot?.department) === studentClass.department;
+        const yearOk = String(slot?.year || "") === studentClass.year;
+        const sectionOk = normalizeTextKey(slot?.section) === studentClass.section;
+        return deptOk && yearOk && sectionOk;
+      });
+      const effectiveSlots = mySlots.length > 0 ? mySlots : filteredInstituteSlots;
+
+      const today = normalizeDay(new Date().toLocaleDateString("en-US", { weekday: "long" }));
+      const todaySchedule = effectiveSlots
+        .filter((slot) => normalizeDay(slot?.day) === today)
         .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+
+      const joinedClassroomRows = Array.isArray(joinedClassroomsRes) ? joinedClassroomsRes : [];
+      setJoinedClassrooms(joinedClassroomRows);
+      setCourseEnrollments(Array.isArray(courseEnrollmentsRes) ? courseEnrollmentsRes : []);
+      const joinedClassroomKeys = new Set(
+        joinedClassroomRows.map((row) =>
+          [
+            String(row?.faculty_id || ""),
+            normalizeTextKey(row?.subject),
+            String(row?.semester || ""),
+          ].join("|")
+        )
+      );
 
       const now = Date.now();
       const upcomingDeadlines = (assignmentsRes || [])
+        .filter((row) => {
+          const key = [
+            String(row?.created_by || ""),
+            normalizeTextKey(row?.subject),
+            String(row?.semester || ""),
+          ].join("|");
+          return joinedClassroomKeys.has(key);
+        })
         .filter((row) => row?.due_at)
         .map((row) => ({ ...row, dueMs: new Date(row.due_at).getTime() }))
         .filter((row) => Number.isFinite(row.dueMs) && row.dueMs >= now)
         .sort((a, b) => a.dueMs - b.dueMs)
         .slice(0, 4);
+
+      const todayDate = new Date();
+      todayDate.setHours(0, 0, 0, 0);
+      const todayMs = todayDate.getTime();
+      const examCount = (Array.isArray(calendarEvents) ? calendarEvents : [])
+        .filter((event) => {
+          const creatorRole = (event?.creator_role || "").toLowerCase();
+          if (!["faculty", "admin"].includes(creatorRole)) return false;
+          if (!isExamCalendarEvent(event)) return false;
+          const eventMs = new Date(`${event?.date || ""}T00:00:00`).getTime();
+          return Number.isFinite(eventMs) && eventMs >= todayMs;
+        });
+      setUpcomingExamCount(examCount.length);
+      setUpcomingExamEvents(examCount);
 
       setPersonalizedOverview({
         todaySchedule,
@@ -98,12 +169,25 @@ function StudentDashboard({ onLogout }) {
         todaySchedule: [],
         upcomingDeadlines: [],
       });
+      setUpcomingExamCount(0);
+      setUpcomingExamEvents([]);
+      setJoinedClassrooms([]);
+      setCourseEnrollments([]);
     } finally {
       setLoadingPersonalizedOverview(false);
     }
   };
 
   useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const joinClassroomId = (params.get("joinClassroomId") || "").trim();
+      if (joinClassroomId) {
+        setPendingJoinClassroomId(joinClassroomId);
+        setActivePage("assignments");
+      }
+    } catch (_) {}
+
     Promise.all([
       DashboardService.getDashboardData(),
       StudentService.getProfile(),
@@ -141,6 +225,9 @@ function StudentDashboard({ onLogout }) {
     { key: "assignments", label: "Assignments" },
     { key: "progress", label: "Academic Progress" },
     { key: "queries", label: "Doubts / Queries" },
+    { key: "attendance-details", label: "Attendance Details" },
+    { key: "credits-details", label: "Credits Details" },
+    { key: "my-exams", label: "My Exams" },
     { key: "calendar", label: "Calendar" },
     { key: "profile", label: "Profile" },
     { key: "settings", label: "Settings" },
@@ -155,6 +242,9 @@ function StudentDashboard({ onLogout }) {
     assignments: "Assignments",
     progress: "Academic Progress",
     queries: "Doubts / Queries",
+    "attendance-details": "Attendance Details",
+    "credits-details": "Credits Details",
+    "my-exams": "My Exams",
     calendar: "Calendar",
     profile: "Profile",
     settings: "Settings",
@@ -173,6 +263,13 @@ function StudentDashboard({ onLogout }) {
             onRefreshAnnouncements={loadDashboardAnnouncements}
             personalizedOverview={personalizedOverview}
             loadingPersonalizedOverview={loadingPersonalizedOverview}
+            onOpenNotifications={() => setActivePage("notifications")}
+            onOpenExams={() => setActivePage("my-exams")}
+            onOpenAttendance={() => setActivePage("attendance-details")}
+            onOpenCredits={() => setActivePage("credits-details")}
+            upcomingExamCount={upcomingExamCount}
+            joinedClassrooms={joinedClassrooms}
+            courseEnrollments={courseEnrollments}
             settings={studentSettings}
           />
         );
@@ -185,11 +282,37 @@ function StudentDashboard({ onLogout }) {
       case "notifications":
         return <Notifications />;
       case "assignments":
-        return <Assignments />;
+        return (
+          <Assignments
+            pendingJoinClassroomId={pendingJoinClassroomId}
+            onHandledJoinLink={() => {
+              setPendingJoinClassroomId(null);
+              const params = new URLSearchParams(window.location.search);
+              if (params.has("joinClassroomId")) {
+                params.delete("joinClassroomId");
+                const query = params.toString();
+                const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}`;
+                window.history.replaceState({}, "", nextUrl);
+              }
+            }}
+          />
+        );
       case "progress":
         return <AcademicProgress />;
       case "queries":
         return <Queries />;
+      case "my-exams":
+        return <ExamSchedule examEvents={upcomingExamEvents} onBack={() => setActivePage("dashboard")} />;
+      case "attendance-details":
+        return (
+          <AttendanceDetails
+            joinedClassrooms={joinedClassrooms}
+            attendancePercentage={data?.attendance_percentage ?? 0}
+            onBack={() => setActivePage("dashboard")}
+          />
+        );
+      case "credits-details":
+        return <CreditsDetails enrollments={courseEnrollments} onBack={() => setActivePage("dashboard")} />;
       case "calendar":
         return <CalendarPage />;
       case "profile":
@@ -216,6 +339,13 @@ function StudentDashboard({ onLogout }) {
             onRefreshAnnouncements={loadDashboardAnnouncements}
             personalizedOverview={personalizedOverview}
             loadingPersonalizedOverview={loadingPersonalizedOverview}
+            onOpenNotifications={() => setActivePage("notifications")}
+            onOpenExams={() => setActivePage("my-exams")}
+            onOpenAttendance={() => setActivePage("attendance-details")}
+            onOpenCredits={() => setActivePage("credits-details")}
+            upcomingExamCount={upcomingExamCount}
+            joinedClassrooms={joinedClassrooms}
+            courseEnrollments={courseEnrollments}
             settings={studentSettings}
           />
         );

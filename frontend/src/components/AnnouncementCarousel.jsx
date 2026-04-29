@@ -4,14 +4,14 @@ function AnnouncementCarousel({
   messages = [],
   loading = false,
   error = "",
-  title = "Announcements",
+  title = "Announcement",
   subtitle = "Latest updates from admin",
   emptyMessage = "No announcements available right now.",
-  onRefresh,
   autoRotateMs = 6000,
 }) {
   const announcementItems = useMemo(() => messages.slice(0, 8), [messages]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [isTickerPaused, setIsTickerPaused] = useState(false);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -19,11 +19,12 @@ function AnnouncementCarousel({
 
   useEffect(() => {
     if (announcementItems.length <= 1) return undefined;
+    if (isTickerPaused) return undefined;
     const timer = setInterval(() => {
       setActiveIndex((prev) => (prev + 1) % announcementItems.length);
     }, autoRotateMs);
     return () => clearInterval(timer);
-  }, [announcementItems.length, autoRotateMs]);
+  }, [announcementItems.length, autoRotateMs, isTickerPaused]);
 
   const goPrev = () => {
     if (announcementItems.length <= 1) return;
@@ -36,23 +37,32 @@ function AnnouncementCarousel({
   };
 
   const current = announcementItems[activeIndex];
+  const tickerText = current
+    ? `${current.subject} | By ${current.sender_name} | ${new Date(current.created_at).toLocaleString()} | ${current.body}`
+    : "";
 
   return (
-    <div className="rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-indigo-50 shadow-sm p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base md:text-lg font-semibold text-slate-900">{title}</h3>
-          <p className="text-sm text-slate-600 mt-1">{subtitle}</p>
+    <div className="announcement-shell rounded-2xl border px-4 pt-2.5 pb-1.5">
+      <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:gap-2">
+        <div className="announcement-label lg:w-32 lg:flex-shrink-0">
+          <h3 className="m-0 text-sm md:text-base font-semibold tracking-tight text-slate-900">{title}</h3>
+          {subtitle ? <p className="m-0 mt-1 text-sm text-slate-600">{subtitle}</p> : null}
         </div>
-        {onRefresh && (
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+
+        {!loading && !error && current ? (
+          <div
+            className="announcement-ticker flex-1"
+            onMouseEnter={() => setIsTickerPaused(true)}
+            onMouseLeave={() => setIsTickerPaused(false)}
           >
-            Refresh
-          </button>
-        )}
+            <div className={`announcement-ticker__track ${isTickerPaused ? "is-paused" : ""}`}>
+              <p className="announcement-ticker__content m-0 text-sm text-slate-700">{tickerText}</p>
+              <p className="announcement-ticker__content m-0 text-sm text-slate-700" aria-hidden="true">
+                {tickerText}
+              </p>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {loading ? (
@@ -62,32 +72,21 @@ function AnnouncementCarousel({
       ) : !current ? (
         <p className="mt-4 text-sm text-slate-500">{emptyMessage}</p>
       ) : (
-        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm md:text-base font-semibold text-slate-900">{current.subject}</p>
-            <span className="text-xs rounded-full px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200">
-              {current.recipient_role}
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 mt-1">
-            By {current.sender_name} | {new Date(current.created_at).toLocaleString()}
-          </p>
-          <p className="text-sm text-slate-700 mt-3 whitespace-pre-wrap">{current.body}</p>
-
+        <div className="mt-3">
           {announcementItems.length > 1 && (
-            <div className="mt-4 flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={goPrev}
-                  className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                  className="rounded-md border border-slate-300 bg-white/80 px-2.5 py-1 text-xs text-slate-700 hover:bg-white"
                 >
                   Prev
                 </button>
                 <button
                   type="button"
                   onClick={goNext}
-                  className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                  className="rounded-md border border-slate-300 bg-white/80 px-2.5 py-1 text-xs text-slate-700 hover:bg-white"
                 >
                   Next
                 </button>
