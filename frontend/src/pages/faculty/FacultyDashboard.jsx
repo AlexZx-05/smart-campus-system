@@ -7,6 +7,7 @@ import EventService from "../../services/EventService";
 import AnnouncementCarousel from "../../components/AnnouncementCarousel";
 import Queries from "../student/Queries";
 import CalendarPage from "../student/CalendarPage";
+import Rooms from "../student/Rooms";
 
 const notificationAvatarPalette = [
   "from-cyan-400 to-blue-600",
@@ -234,6 +235,7 @@ function FacultyDashboard({ onLogout }) {
   const [loadingAssignmentRoster, setLoadingAssignmentRoster] = useState(false);
   const [submissionReviewDrafts, setSubmissionReviewDrafts] = useState({});
   const [assignmentNowMs, setAssignmentNowMs] = useState(Date.now());
+  const [dashboardNow, setDashboardNow] = useState(() => new Date());
   const composeTeacherMessageRef = useRef(null);
   const teacherMenuRef = useRef(null);
   const classroomTabContentRef = useRef(null);
@@ -244,6 +246,7 @@ function FacultyDashboard({ onLogout }) {
     { key: "dashboard", label: "Dashboard" },
     { key: "my-timetable", label: "My Timetable" },
     { key: "all-classes", label: "All Classes" },
+    { key: "rooms", label: "Live Room Status" },
     { key: "preferences", label: "Submit Preference" },
     { key: "assignments", label: "Classroom" },
     { key: "calendar", label: "Calendar" },
@@ -258,6 +261,7 @@ function FacultyDashboard({ onLogout }) {
     dashboard: "Faculty Dashboard",
     "my-timetable": "My Timetable",
     "all-classes": "All Classes",
+    rooms: "Live Room Status",
     preferences: "Submit Preference",
     assignments: "Classroom",
     calendar: "Calendar",
@@ -688,6 +692,12 @@ function FacultyDashboard({ onLogout }) {
   useEffect(() => {
     if (activePage !== "assignments") return undefined;
     const timer = setInterval(() => setAssignmentNowMs(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, [activePage]);
+
+  useEffect(() => {
+    if (activePage !== "dashboard") return undefined;
+    const timer = setInterval(() => setDashboardNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, [activePage]);
 
@@ -1611,7 +1621,7 @@ function FacultyDashboard({ onLogout }) {
         return hh * 60 + mm;
       };
 
-      const now = new Date();
+      const now = dashboardNow;
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
       const sortedTodaySchedule = [...todaySchedule].sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
       const activeMySlot = sortedTodaySchedule.find(
@@ -1642,13 +1652,17 @@ function FacultyDashboard({ onLogout }) {
               <p className="mt-2 text-2xl font-semibold text-slate-900">{todaySchedule.length}</p>
               <p className="mt-1 text-xs text-slate-500">Scheduled teaching slots</p>
             </div>
-            <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-white via-cyan-50 to-sky-100/70 p-4 shadow-[0_18px_36px_-26px_rgba(8,145,178,0.35)]">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Running Campus Classes</p>
+            <button
+              type="button"
+              onClick={() => setActivePage("rooms")}
+              className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-white via-cyan-50 to-sky-100/70 p-4 text-left shadow-[0_18px_36px_-26px_rgba(8,145,178,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_22px_42px_-26px_rgba(8,145,178,0.45)]"
+            >
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Live Room Status</p>
               <p className="mt-2 text-2xl font-semibold text-slate-900">{roomLiveStatus?.running_classes_count ?? 0}</p>
               <p className="mt-1 text-xs text-slate-500">
                 {roomLiveStatus?.day || now.toLocaleDateString("en-US", { weekday: "long" })}
               </p>
-            </div>
+            </button>
             <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-100/70 p-4 shadow-[0_18px_36px_-26px_rgba(5,150,105,0.35)]">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Current Teaching Status</p>
               <p className="mt-2 text-base font-semibold text-slate-900">{activeMySlot ? "In Class" : "Available"}</p>
@@ -1666,51 +1680,70 @@ function FacultyDashboard({ onLogout }) {
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50/45 p-6 shadow-[0_18px_38px_-28px_rgba(15,23,42,0.32)]">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_18px_38px_-28px_rgba(15,23,42,0.22)]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-xl font-semibold tracking-tight text-slate-900">Live Room Intelligence</h3>
-                  <p className="mt-1 text-sm text-slate-500">Who is teaching right now, in which room, and for which subject.</p>
+                  <h3 className="text-xl font-semibold tracking-tight text-slate-900">Today&apos;s Schedule</h3>
+                  <p className="mt-1 text-sm text-slate-500">Your teaching plan for today with time, classroom, and class details.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    loadFacultyRoomLiveStatus();
-                    loadFacultyTimetable();
-                    loadInboxMessages();
-                  }}
-                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                >
-                  Refresh Live Data
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-900 shadow-sm">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    {now.toLocaleDateString("en-US", {
+                      weekday: "long",
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                    })}{" "}
+                    |{" "}
+                    {now.toLocaleTimeString("en-US", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </span>
+                </div>
               </div>
 
-              {loadingRoomLiveStatus ? (
-                <p className="mt-4 text-sm text-slate-500">Loading live classrooms...</p>
-              ) : roomLiveStatusError ? (
+              {loadingTimetable ? (
+                <p className="mt-4 text-sm text-slate-500">Loading your teaching schedule...</p>
+              ) : timetableError ? (
                 <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {roomLiveStatusError}
+                  {timetableError}
                 </div>
-              ) : runningRoomClasses.length === 0 ? (
-                <p className="mt-4 text-sm text-slate-500">No classroom is currently running a live slot.</p>
+              ) : sortedTodaySchedule.length === 0 ? (
+                <div className="mt-5 rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-5 py-4">
+                  <p className="text-sm font-semibold text-emerald-900">
+                    {now.getDay() === 0 || now.getDay() === 6
+                      ? "No classes today. Enjoy your weekend."
+                      : "No teaching slots assigned for today."}
+                  </p>
+                  <p className="mt-1 text-xs text-emerald-700">If this is unexpected, check semester filter or contact timetable admin.</p>
+                </div>
               ) : (
-                <div className="mt-4 space-y-3">
-                  {runningRoomClasses.map((roomItem) => {
-                    const slot = roomItem.running_class;
+                <div className="mt-5 space-y-3">
+                  {sortedTodaySchedule.map((slot, idx) => {
+                    const slotStart = toMinutes(slot.start_time);
+                    const slotEnd = toMinutes(slot.end_time);
+                    const slotStatus =
+                      nowMinutes >= slotStart && nowMinutes < slotEnd
+                        ? { label: "Ongoing", className: "border-emerald-200 bg-emerald-50 text-emerald-700" }
+                        : nowMinutes < slotStart
+                          ? { label: "Upcoming", className: "border-blue-200 bg-blue-50 text-blue-700" }
+                          : { label: "Completed", className: "border-slate-200 bg-slate-100 text-slate-700" };
+
                     return (
-                      <div key={`${roomItem.room}-${slot.id || slot.subject}`} className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 shadow-sm">
+                      <div key={`${slot.id || idx}`} className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-slate-50 p-4 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-sm font-semibold text-blue-900">
-                            Room {roomItem.room} | {slot.start_time} - {slot.end_time}
+                          <p className="text-sm font-semibold text-slate-900">
+                            {slot.start_time} - {slot.end_time} | Room {slot.room || "-"}
                           </p>
-                          <span className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                            Live
+                          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${slotStatus.className}`}>
+                            {slotStatus.label}
                           </span>
                         </div>
-                        <p className="mt-1 text-sm text-blue-900">
-                          {slot.subject} | {slot.faculty_name || "Faculty"}
-                        </p>
-                        <p className="mt-1 text-xs text-blue-700">
+                        <p className="mt-1 text-sm font-semibold text-slate-900">{slot.subject || "Subject not assigned"}</p>
+                        <p className="mt-1 text-xs text-slate-600">
                           Class: {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
                         </p>
                       </div>
@@ -1720,11 +1753,11 @@ function FacultyDashboard({ onLogout }) {
               )}
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-violet-50/50 to-fuchsia-50/35 p-6 shadow-[0_18px_38px_-28px_rgba(76,29,149,0.3)]">
+            <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-sky-50 to-cyan-50 p-6 shadow-[0_18px_38px_-28px_rgba(14,116,144,0.35)]">
               <h4 className="text-lg font-semibold tracking-tight text-slate-900">My Teaching Pulse</h4>
               <div className="mt-4 space-y-3">
-                <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Current Slot</p>
+                <div className="rounded-xl border border-emerald-200 bg-white/90 p-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Current Slot</p>
                   {activeMySlot ? (
                     <>
                       <p className="mt-1 text-sm font-semibold text-slate-900">{activeMySlot.subject}</p>
@@ -1733,12 +1766,12 @@ function FacultyDashboard({ onLogout }) {
                       </p>
                     </>
                   ) : (
-                    <p className="mt-1 text-sm text-slate-600">No ongoing class right now.</p>
+                    <p className="mt-1 text-sm text-slate-700">No ongoing class right now.</p>
                   )}
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Next Slot</p>
+                <div className="rounded-xl border border-blue-200 bg-white/90 p-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">Next Slot</p>
                   {nextMySlot ? (
                     <>
                       <p className="mt-1 text-sm font-semibold text-slate-900">{nextMySlot.subject}</p>
@@ -1747,7 +1780,7 @@ function FacultyDashboard({ onLogout }) {
                       </p>
                     </>
                   ) : (
-                    <p className="mt-1 text-sm text-slate-600">No more classes scheduled today.</p>
+                    <p className="mt-1 text-sm text-slate-700">No more classes scheduled today.</p>
                   )}
                 </div>
 
@@ -1755,21 +1788,21 @@ function FacultyDashboard({ onLogout }) {
                   <button
                     type="button"
                     onClick={() => setActivePage("my-timetable")}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                    className="w-full rounded-xl border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-800 transition hover:bg-blue-50"
                   >
                     Open My Timetable
                   </button>
                   <button
                     type="button"
                     onClick={() => setActivePage("all-classes")}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                    className="w-full rounded-xl border border-sky-300 bg-white px-3 py-2 text-sm font-semibold text-sky-800 transition hover:bg-sky-50"
                   >
                     View All Classes
                   </button>
                   <button
                     type="button"
                     onClick={() => setActivePage("conflicts")}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                    className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-50"
                   >
                     Report Conflict
                   </button>
@@ -1805,40 +1838,45 @@ function FacultyDashboard({ onLogout }) {
 
     if (activePage === "my-timetable") {
       return (
-        <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-blue-200 bg-gradient-to-r from-white via-blue-50 to-cyan-50 p-6 shadow-[0_18px_36px_-28px_rgba(2,132,199,0.35)]">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h3 className="text-lg font-semibold text-slate-800">My Timetable</h3>
-                <p className="text-sm text-slate-500 mt-1">See your complete slot allocation and today&apos;s classes.</p>
+                <h3 className="text-2xl font-semibold tracking-tight text-slate-900">My Timetable</h3>
+                <p className="mt-1 text-sm text-slate-600">See your complete slot allocation and today&apos;s classes.</p>
               </div>
-              <input
-                value={semesterFilter}
-                onChange={(e) => setSemesterFilter(e.target.value)}
-                placeholder="Semester (e.g. Odd 2026)"
-                className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
-              />
+              <div className="relative">
+                <input
+                  value={semesterFilter}
+                  onChange={(e) => setSemesterFilter(e.target.value)}
+                  placeholder="Semester (e.g. Odd 2026)"
+                  className="w-64 rounded-xl border border-blue-200 bg-white/90 px-4 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
             </div>
           </div>
 
           {timetableError && (
-            <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{timetableError}</div>
+            <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{timetableError}</div>
           )}
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <h4 className="text-base font-semibold text-slate-800">Today&apos;s Teaching Plan</h4>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_14px_30px_-24px_rgba(15,23,42,0.35)]">
+            <h4 className="text-lg font-semibold tracking-tight text-slate-900">Today&apos;s Teaching Plan</h4>
             {loadingTimetable ? (
-              <p className="text-sm text-slate-500 mt-3">Loading...</p>
+              <p className="mt-3 text-sm text-slate-500">Loading your classes...</p>
             ) : todaySchedule.length === 0 ? (
-              <p className="text-sm text-slate-500 mt-3">No class assigned for today.</p>
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-4 py-3">
+                <p className="text-sm font-semibold text-emerald-900">No class assigned for today.</p>
+                <p className="mt-1 text-xs text-emerald-700">Your schedule is clear for today based on the selected semester.</p>
+              </div>
             ) : (
-              <div className="mt-3 space-y-3">
+              <div className="mt-4 space-y-3">
                 {todaySchedule.map((slot, idx) => (
-                  <div key={`${slot.id || idx}`} className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-                    <p className="text-sm font-semibold text-blue-900">
+                  <div key={`${slot.id || idx}`} className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
                       {slot.start_time} - {slot.end_time} | {slot.subject}
                     </p>
-                    <p className="text-xs text-blue-700 mt-1">
+                    <p className="mt-1 text-xs text-slate-600">
                       Room {slot.room} | {slot.department || "-"} {slot.year || "-"}-{slot.section || "-"}
                     </p>
                   </div>
@@ -1847,32 +1885,35 @@ function FacultyDashboard({ onLogout }) {
             )}
           </div>
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-            <h4 className="text-base font-semibold text-slate-800">Full Faculty Timetable</h4>
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_14px_30px_-24px_rgba(15,23,42,0.35)]">
+            <h4 className="text-lg font-semibold tracking-tight text-slate-900">Full Faculty Timetable</h4>
             {loadingTimetable ? (
-              <p className="text-sm text-slate-500 mt-3">Loading...</p>
+              <p className="mt-3 text-sm text-slate-500">Loading timetable...</p>
             ) : facultyTimetable.length === 0 ? (
-              <p className="text-sm text-slate-500 mt-3">No published timetable for selected semester.</p>
+              <div className="mt-4 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 px-4 py-3">
+                <p className="text-sm font-semibold text-amber-900">No published timetable for selected semester.</p>
+                <p className="mt-1 text-xs text-amber-700">Try a different semester value or check with timetable admin.</p>
+              </div>
             ) : (
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden">
-                  <thead className="bg-slate-50">
+              <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full overflow-hidden">
+                  <thead className="bg-slate-100">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Day</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Time</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Subject</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Class</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Room</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Day</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Time</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Subject</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Class</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Room</th>
                     </tr>
                   </thead>
                   <tbody>
                     {facultyTimetable.map((slot, idx) => (
-                      <tr key={`${slot.id || idx}`} className="border-t border-slate-200">
-                        <td className="px-4 py-3 text-sm text-slate-700">{slot.day}</td>
+                      <tr key={`${slot.id || idx}`} className="border-t border-slate-200 bg-white transition hover:bg-blue-50/40">
+                        <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.day}</td>
                         <td className="px-4 py-3 text-sm text-slate-700">
                           {slot.start_time} - {slot.end_time}
                         </td>
-                        <td className="px-4 py-3 text-sm text-slate-700">{slot.subject}</td>
+                        <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.subject}</td>
                         <td className="px-4 py-3 text-sm text-slate-700">
                           {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
                         </td>
@@ -4564,6 +4605,10 @@ function FacultyDashboard({ onLogout }) {
           )}
         </div>
       );
+    }
+
+    if (activePage === "rooms") {
+      return <Rooms />;
     }
 
     if (activePage === "messages") {
