@@ -316,7 +316,12 @@ function StudentDashboard({ onLogout }) {
           />
         );
       case "progress":
-        return <AcademicProgress onOpenAttendance={() => setActivePage("attendance-details")} />;
+        return (
+          <AcademicProgress
+            onOpenAttendance={() => setActivePage("attendance-details")}
+            onOpenCredits={() => setActivePage("credits-details")}
+          />
+        );
       case "queries":
         return <Queries />;
       case "my-exams":

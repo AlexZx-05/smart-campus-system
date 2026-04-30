@@ -43,58 +43,6 @@ const classroomDetailThemes = [
   },
 ];
 
-const availableClassroomDummy = [
-  {
-    id: "dummy-invite-1",
-    title: "Operating Systems 2024",
-    subject: "Operating Systems",
-    faculty_name: "Dr. Dubacharla Gyaneshwar",
-    department: "CSE",
-    year: "3",
-    section: "22 Batch",
-    notification_message: "Join now to receive lab sheets and weekly tasks.",
-    join_link: "#",
-    isDummy: true,
-  },
-  {
-    id: "dummy-invite-2",
-    title: "LA 204: Psychology",
-    subject: "Liberal Arts",
-    faculty_name: "Shraddha Pradip Namjoshi",
-    department: "IIITR",
-    year: "2",
-    section: "A",
-    notification_message: "Classroom active for attendance, notes, and submissions.",
-    join_link: "#",
-    isDummy: true,
-  },
-];
-
-const joinedClassroomDummy = [
-  {
-    id: "dummy-joined-1",
-    title: "DBMS - Section B",
-    subject: "Database Systems",
-    faculty_name: "Prof. A. Sharma",
-    department: "CSE",
-    year: "3",
-    section: "B",
-    join_link: "#",
-    isDummy: true,
-  },
-  {
-    id: "dummy-joined-2",
-    title: "CN Practice Classroom",
-    subject: "Computer Networks",
-    faculty_name: "Prof. N. Iyer",
-    department: "CSE",
-    year: "3",
-    section: "B",
-    join_link: "#",
-    isDummy: true,
-  },
-];
-
 function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
   const [assignments, setAssignments] = useState([]);
   const [reminders, setReminders] = useState([]);
@@ -236,14 +184,8 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     () => assignments.find((item) => item.id === selectedAssignmentId) || null,
     [assignments, selectedAssignmentId]
   );
-  const inviteCards = useMemo(
-    () => (classroomInvites.length > 0 ? classroomInvites : availableClassroomDummy),
-    [classroomInvites]
-  );
-  const joinedCards = useMemo(
-    () => (joinedClassrooms.length > 0 ? joinedClassrooms : joinedClassroomDummy),
-    [joinedClassrooms]
-  );
+  const inviteCards = useMemo(() => classroomInvites, [classroomInvites]);
+  const joinedCards = useMemo(() => joinedClassrooms, [joinedClassrooms]);
   const filteredClassroomCards = useMemo(() => {
     const source = activeClassroomTab === "invites" ? inviteCards : joinedCards;
     const q = classroomSearch.trim().toLowerCase();
@@ -345,35 +287,19 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     const normalizeText = (value = "") => String(value || "").trim().toLowerCase();
     const classroomAssignments = (assignments || []).filter((assignment) => {
       const roomSubject = normalizeText(detailRoom.subject);
-      const roomTitle = normalizeText(detailRoom.title);
-      const roomFaculty = normalizeText(detailRoom.faculty_name);
+      const roomFacultyId = detailRoom.faculty_id;
+      const roomSemester = normalizeText(detailRoom.semester);
       const assignmentSubject = normalizeText(assignment.subject);
-      const assignmentFaculty = normalizeText(assignment.created_by_name);
+      const assignmentSemester = normalizeText(assignment.semester);
 
-      if (roomSubject && assignmentSubject === roomSubject) return true;
-      if (roomFaculty && assignmentFaculty === roomFaculty && (!roomSubject || assignmentSubject.includes(roomSubject))) return true;
-      if (roomTitle && normalizeText(assignment.title).includes(roomTitle)) return true;
-      return false;
+      if (roomFacultyId && Number(assignment.created_by) !== Number(roomFacultyId)) return false;
+      if (roomSubject && assignmentSubject !== roomSubject) return false;
+      if (roomSemester && assignmentSemester && assignmentSemester !== roomSemester) return false;
+      return true;
     });
-    const classworkAssignments = classroomAssignments.length > 0 ? classroomAssignments : assignments || [];
-    const classworkFallback = [
-      {
-        id: "cw-demo-1",
-        title: `${detailRoom.subject || "Class"} Assignment-3`,
-        due_at: "2024-04-29T10:00:00",
-      },
-      {
-        id: "cw-demo-2",
-        title: `${detailRoom.subject || "Class"} Assignment-2`,
-        due_at: "2024-03-28T10:00:00",
-      },
-      {
-        id: "cw-demo-3",
-        title: `${detailRoom.subject || "Class"} Project Design details`,
-        due_at: "2024-04-29T10:00:00",
-      },
-    ];
-    const renderedClasswork = classworkAssignments.length > 0 ? classworkAssignments : classworkFallback;
+    const renderedClasswork = [...classroomAssignments].sort(
+      (a, b) => new Date(b.created_at || b.due_at || 0).getTime() - new Date(a.created_at || a.due_at || 0).getTime()
+    );
     const formatDueDate = (dueAt) => {
       if (!dueAt) return "No due date";
       const parsed = new Date(dueAt);
@@ -384,23 +310,17 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
         year: "numeric",
       })}`;
     };
-    const streamItems = [
-      {
-        id: "stream-1",
-        title: `${detailRoom.faculty_name || "Teacher"} posted a new assignment: ${detailRoom.title || detailRoom.subject || "Class update"}`,
-        date: "22 Apr 2024",
-      },
-      {
-        id: "stream-2",
-        title: `${detailRoom.faculty_name || "Teacher"} posted a new assignment: ${detailRoom.subject || "Classwork"}`,
-        date: "19 Mar 2024",
-      },
-      {
-        id: "stream-3",
-        title: `${detailRoom.faculty_name || "Teacher"} posted a new assignment: Project details`,
-        date: "22 Feb 2024",
-      },
-    ];
+    const streamItems = renderedClasswork.slice(0, 8).map((assignment) => {
+      const createdAt = assignment.created_at ? new Date(assignment.created_at) : null;
+      const dateText = createdAt && !Number.isNaN(createdAt.getTime())
+        ? createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+        : "Recently";
+      return {
+        id: `stream-${assignment.id}`,
+        title: `${detailRoom.faculty_name || "Teacher"} posted: ${assignment.title || "New assignment"}`,
+        date: dateText,
+      };
+    });
 
     return (
       <div className="-mx-4 -mt-4 overflow-hidden bg-white md:-mx-6 md:-mt-6">
@@ -470,21 +390,27 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                     New announcement
                   </button>
 
-                  {streamItems.map((item) => (
-                    <article key={item.id} className="flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_24px_36px_-24px_rgba(15,23,42,0.45)]">
-                      <div className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${activeDetailTheme.iconWrap}`}>
-                        <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
-                          <rect x="5" y="4" width="14" height="16" rx="2.5" />
-                          <path d="M9 4.5h6M9 9.5h6M9 13.5h4" />
-                        </svg>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[1.12rem] font-semibold text-slate-800">{item.title}</p>
-                        <p className="mt-1 text-sm text-slate-600">{item.date} (Edited {item.date})</p>
-                      </div>
-                      <button type="button" className="rounded-lg px-2 text-2xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">&#8942;</button>
-                    </article>
-                  ))}
+                  {streamItems.length > 0 ? (
+                    streamItems.map((item) => (
+                      <article key={item.id} className="flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_24px_36px_-24px_rgba(15,23,42,0.45)]">
+                        <div className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${activeDetailTheme.iconWrap}`}>
+                          <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="5" y="4" width="14" height="16" rx="2.5" />
+                            <path d="M9 4.5h6M9 9.5h6M9 13.5h4" />
+                          </svg>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[1.12rem] font-semibold text-slate-800">{item.title}</p>
+                          <p className="mt-1 text-sm text-slate-600">{item.date}</p>
+                        </div>
+                        <button type="button" className="rounded-lg px-2 text-2xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">&#8942;</button>
+                      </article>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-600">
+                      No stream updates yet for this classroom.
+                    </div>
+                  )}
                 </div>
               </div>
             </>
@@ -991,7 +917,11 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
         </div>
         {filteredClassroomCards.length === 0 && (
           <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
-            No classrooms match your search.
+            {classroomSearch.trim()
+              ? "No classrooms match your search."
+              : activeClassroomTab === "invites"
+                ? "No classroom invites available right now."
+                : "You have not joined any classroom yet."}
           </div>
         )}
       </div>

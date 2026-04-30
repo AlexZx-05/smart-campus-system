@@ -193,6 +193,11 @@ const PreferenceService = {
     return response.data;
   },
 
+  markAdminConflictInReview: async (conflictId) => {
+    const response = await API.patch(`/admin/conflicts/${conflictId}/review`);
+    return response.data;
+  },
+
   getFacultyTimetable: async (semester) => {
     const response = await API.get("/faculty/timetable/me", {
       params: semester ? { semester } : {},
@@ -231,6 +236,16 @@ const PreferenceService = {
 
   createFacultyConflict: async (payload) => {
     const response = await API.post("/faculty/conflicts", payload);
+    return response.data;
+  },
+
+  acceptFacultyConflictFix: async (conflictId) => {
+    const response = await API.patch(`/faculty/conflicts/${conflictId}/accept-fix`);
+    return response.data;
+  },
+
+  requestFacultyConflictManualReview: async (conflictId) => {
+    const response = await API.patch(`/faculty/conflicts/${conflictId}/request-manual`);
     return response.data;
   },
 

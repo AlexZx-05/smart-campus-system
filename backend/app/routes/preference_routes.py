@@ -677,6 +677,36 @@ def _is_student_enrolled_for_assignment(student_id, assignment):
     return query.first() is not None
 
 
+def _is_student_joined_relevant_classroom(student_id, assignment):
+    if not student_id or not assignment:
+        return False
+
+    query = (
+        ClassroomMembership.query
+        .join(Classroom, ClassroomMembership.classroom_id == Classroom.id)
+        .filter(
+            ClassroomMembership.student_id == student_id,
+            Classroom.is_active == True,  # noqa: E712
+            Classroom.faculty_id == assignment.created_by,
+            func.lower(Classroom.subject) == _normalize_text_key(assignment.subject),
+        )
+    )
+
+    if assignment.semester:
+        query = query.filter(Classroom.semester == assignment.semester)
+    else:
+        query = query.filter(Classroom.semester.is_(None))
+
+    if assignment.department:
+        query = query.filter(func.lower(Classroom.department) == _normalize_text_key(assignment.department))
+    if assignment.year is not None:
+        query = query.filter(Classroom.year == assignment.year)
+    if assignment.section:
+        query = query.filter(func.upper(Classroom.section) == (assignment.section or "").strip().upper())
+
+    return query.first() is not None
+
+
 def _get_enrolled_students_for_assignment(assignment):
     if not assignment:
         return []
@@ -701,7 +731,7 @@ def _get_enrolled_students_for_assignment(assignment):
 def _is_assignment_visible_to_student(assignment, student):
     if not student:
         return False
-    return _is_student_enrolled_for_assignment(student.id, assignment)
+    return _is_student_joined_relevant_classroom(student.id, assignment)
 
 
 def _send_assignment_reminder_email(student, faculty, assignment):
@@ -760,6 +790,27 @@ def _is_valid_time_range(start_time, end_time):
 
 def _times_overlap(start_a, end_a, start_b, end_b):
     return start_a < end_b and end_a > start_b
+
+
+def _time_to_minutes(value):
+    text = (value or "").strip()
+    if ":" not in text:
+        return None
+    try:
+        hh, mm = text.split(":", 1)
+        hh_int = int(hh)
+        mm_int = int(mm)
+    except (TypeError, ValueError):
+        return None
+    if hh_int < 0 or hh_int > 23 or mm_int < 0 or mm_int > 59:
+        return None
+    return hh_int * 60 + mm_int
+
+
+def _minutes_to_time(value):
+    hh = int(value // 60)
+    mm = int(value % 60)
+    return f"{hh:02d}:{mm:02d}"
 
 
 def _active_rooms_sorted():
@@ -821,8 +872,13 @@ def _auto_assign_rooms_for_slots(slot_like_items):
             unassigned.append(
                 {
                     "source_preference_id": item.get("source_preference_id"),
+                    "faculty_id": item.get("faculty_id"),
                     "faculty_name": item.get("faculty_name"),
                     "subject": item.get("subject"),
+                    "semester": item.get("semester"),
+                    "department": item.get("department"),
+                    "year": item.get("year"),
+                    "section": item.get("section"),
                     "day": day,
                     "start_time": start_time,
                     "end_time": end_time,
@@ -832,6 +888,162 @@ def _auto_assign_rooms_for_slots(slot_like_items):
             )
 
     return assigned, unassigned
+
+
+def _build_conflict_suggestion_for_unassigned(item, assigned_slots):
+    day = item.get("day")
+    start_time = item.get("start_time")
+    end_time = item.get("end_time")
+    faculty_id = item.get("faculty_id")
+    student_count = int(item.get("student_count") or 0)
+    start_min = _time_to_minutes(start_time)
+    end_min = _time_to_minutes(end_time)
+    if start_min is None or end_min is None or end_min <= start_min:
+        return None
+
+    duration = end_min - start_min
+    rooms = _active_rooms_sorted()
+    day_slots = [slot for slot in assigned_slots if slot.get("day") == day]
+
+    def room_free(room_name, cand_start, cand_end):
+        for slot in day_slots:
+            if slot.get("room") != room_name:
+                continue
+            slot_start = _time_to_minutes(slot.get("start_time"))
+            slot_end = _time_to_minutes(slot.get("end_time"))
+            if slot_start is None or slot_end is None:
+                continue
+            if cand_start < slot_end and cand_end > slot_start:
+                return False
+        return True
+
+    def faculty_free(cand_start, cand_end):
+        for slot in day_slots:
+            if slot.get("faculty_id") != faculty_id:
+                continue
+            slot_start = _time_to_minutes(slot.get("start_time"))
+            slot_end = _time_to_minutes(slot.get("end_time"))
+            if slot_start is None or slot_end is None:
+                continue
+            if cand_start < slot_end and cand_end > slot_start:
+                return False
+        return True
+
+    for offset in range(1, 5):
+        for direction in (-1, 1):
+            cand_start = start_min + direction * offset * 60
+            cand_end = cand_start + duration
+            if cand_start < 8 * 60 or cand_end > 20 * 60:
+                continue
+            if not faculty_free(cand_start, cand_end):
+                continue
+            for room in rooms:
+                if room["capacity"] < student_count:
+                    continue
+                if room_free(room["name"], cand_start, cand_end):
+                    return {
+                        "type": "time_shift",
+                        "day": day,
+                        "start_time": _minutes_to_time(cand_start),
+                        "end_time": _minutes_to_time(cand_end),
+                        "room": room["name"],
+                        "room_capacity": room["capacity"],
+                        "reason": "Nearest available slot with sufficient room capacity",
+                    }
+    return None
+
+
+def _notify_impacted_faculty_conflicts(admin_user_id, semester, unassigned, assigned_slots):
+    if not admin_user_id or not unassigned:
+        return
+
+    grouped = {}
+    for item in unassigned:
+        fid = item.get("faculty_id")
+        if not fid:
+            continue
+        grouped.setdefault(int(fid), []).append(item)
+
+    for faculty_id, items in grouped.items():
+        faculty_user = User.query.get(faculty_id)
+        if not faculty_user or faculty_user.role != "faculty":
+            continue
+
+        lines = []
+        for item in items[:5]:
+            suggestion = _build_conflict_suggestion_for_unassigned(item, assigned_slots)
+            base = (
+                f"- {item.get('subject') or 'Subject'} | {item.get('day')} "
+                f"{item.get('start_time')}-{item.get('end_time')} | "
+                f"{item.get('department') or '-'} / {item.get('year') or '-'} / {item.get('section') or '-'}"
+            )
+            if suggestion:
+                base += (
+                    f"\n  Suggestion: {suggestion.get('day')} {suggestion.get('start_time')}-{suggestion.get('end_time')} "
+                    f"in room {suggestion.get('room')} ({suggestion.get('reason')})"
+                )
+            lines.append(base)
+
+        subject = f"Timetable Conflict Alert - {semester or 'Current Semester'}"
+        body = (
+            "Some of your approved preferences could not be assigned during draft generation.\n\n"
+            f"Unassigned slots: {len(items)}\n\n"
+            f"{chr(10).join(lines)}\n\n"
+            "Action: Open Conflict Requests and either accept suggested fix or request manual admin review."
+        )
+
+        db.session.add(
+            FacultyPeerMessage(
+                sender_id=admin_user_id,
+                recipient_id=faculty_id,
+                subject=subject,
+                body=body,
+            )
+        )
+
+        db.session.add(
+            ConflictRequest(
+                title=f"Auto conflict: {semester or 'Timetable draft'}",
+                description=body,
+                status="open",
+                created_by=faculty_id,
+            )
+        )
+
+
+def _notify_faculty_timetable_conflicts(admin_user_id, semester, total_requested, total_assigned, unassigned):
+    if not admin_user_id or not unassigned:
+        return
+
+    impacted_names = sorted(
+        {
+            (item.get("faculty_name") or "").strip()
+            for item in (unassigned or [])
+            if (item.get("faculty_name") or "").strip()
+        }
+    )
+    impacted_preview = ", ".join(impacted_names[:8]) if impacted_names else "Faculty members"
+    if len(impacted_names) > 8:
+        impacted_preview += f", +{len(impacted_names) - 8} more"
+
+    semester_text = semester or "Current Semester"
+    subject = f"Timetable Conflict Alert - {semester_text}"
+    body = (
+        f"Auto-generation detected timetable conflicts for {semester_text}.\n\n"
+        f"Requested slots: {total_requested}\n"
+        f"Assigned slots: {total_assigned}\n"
+        f"Unassigned slots: {len(unassigned)}\n"
+        f"Impacted faculty: {impacted_preview}\n\n"
+        "Please review your timetable preferences and submit a conflict request if adjustment is needed."
+    )
+
+    row = AdminMessage(
+        sender_id=admin_user_id,
+        recipient_role="faculty",
+        subject=subject,
+        body=body,
+    )
+    db.session.add(row)
 
 
 @preference_bp.route("/api/faculty/preferences", methods=["POST"])
@@ -1076,6 +1288,21 @@ def generate_timetable_from_preferences():
                 "total_slots": 0,
             }
         faculty_summary[key]["total_slots"] += 1
+
+    _notify_faculty_timetable_conflicts(
+        admin_user_id=user.id,
+        semester=semester,
+        total_requested=len(draft_slots),
+        total_assigned=len(timetable),
+        unassigned=unassigned,
+    )
+    _notify_impacted_faculty_conflicts(
+        admin_user_id=user.id,
+        semester=semester,
+        unassigned=unassigned,
+        assigned_slots=timetable,
+    )
+    db.session.commit()
 
     return jsonify({
         "message": "Timetable draft generated with clash-free auto room allocation",
@@ -2150,7 +2377,7 @@ def get_admin_conflicts():
 
     status = (request.args.get("status") or "").strip().lower()
     query = ConflictRequest.query
-    if status in {"pending", "resolved"}:
+    if status in {"open", "in_review", "resolved", "closed", "pending"}:
         query = query.filter(ConflictRequest.status == status)
     rows = query.order_by(ConflictRequest.created_at.desc()).all()
     return jsonify([_serialize_conflict(row) for row in rows]), 200
@@ -2188,7 +2415,7 @@ def create_faculty_conflict():
     row = ConflictRequest(
         title=title[:160],
         description=description or None,
-        status="pending",
+        status="open",
         created_by=user.id,
     )
     db.session.add(row)
@@ -2212,7 +2439,7 @@ def create_admin_conflict():
     row = ConflictRequest(
         title=title,
         description=description or None,
-        status="pending",
+        status="open",
         created_by=user.id,
     )
     db.session.add(row)
@@ -2239,6 +2466,61 @@ def resolve_admin_conflict(conflict_id):
     _log_admin_activity(user.id, "conflict_resolve", f"Resolved conflict #{row.id}: {row.title}")
     db.session.commit()
     return jsonify({"message": "Conflict resolved", "data": _serialize_conflict(row)}), 200
+
+
+@preference_bp.route("/api/admin/conflicts/<int:conflict_id>/review", methods=["PATCH"])
+@jwt_required()
+def review_admin_conflict(conflict_id):
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    row = ConflictRequest.query.get(conflict_id)
+    if not row:
+        return jsonify({"message": "Conflict not found"}), 404
+
+    row.status = "in_review"
+    db.session.commit()
+    _log_admin_activity(user.id, "conflict_review", f"Marked conflict #{row.id} as in_review")
+    db.session.commit()
+    return jsonify({"message": "Conflict moved to in_review", "data": _serialize_conflict(row)}), 200
+
+
+@preference_bp.route("/api/faculty/conflicts/<int:conflict_id>/accept-fix", methods=["PATCH"])
+@jwt_required()
+def accept_faculty_conflict_fix(conflict_id):
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    row = ConflictRequest.query.get(conflict_id)
+    if not row:
+        return jsonify({"message": "Conflict not found"}), 404
+    if row.created_by != user.id:
+        return jsonify({"message": "Forbidden"}), 403
+
+    row.status = "resolved"
+    row.resolved_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"message": "Fix accepted and conflict resolved.", "data": _serialize_conflict(row)}), 200
+
+
+@preference_bp.route("/api/faculty/conflicts/<int:conflict_id>/request-manual", methods=["PATCH"])
+@jwt_required()
+def request_manual_faculty_conflict_resolution(conflict_id):
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    row = ConflictRequest.query.get(conflict_id)
+    if not row:
+        return jsonify({"message": "Conflict not found"}), 404
+    if row.created_by != user.id:
+        return jsonify({"message": "Forbidden"}), 403
+
+    row.status = "in_review"
+    db.session.commit()
+    return jsonify({"message": "Manual review requested from admin.", "data": _serialize_conflict(row)}), 200
 
 
 @preference_bp.route("/api/student/course-enrollments", methods=["GET"])

@@ -83,6 +83,7 @@ function FacultyDashboard({ onLogout }) {
   const [instituteTimetable, setInstituteTimetable] = useState([]);
   const [loadingTimetable, setLoadingTimetable] = useState(false);
   const [timetableError, setTimetableError] = useState("");
+  const [facultyTimetableView, setFacultyTimetableView] = useState("my");
   const [roomLiveStatus, setRoomLiveStatus] = useState(null);
   const [loadingRoomLiveStatus, setLoadingRoomLiveStatus] = useState(false);
   const [roomLiveStatusError, setRoomLiveStatusError] = useState("");
@@ -244,8 +245,7 @@ function FacultyDashboard({ onLogout }) {
 
   const sidebarItems = [
     { key: "dashboard", label: "Dashboard" },
-    { key: "my-timetable", label: "My Timetable" },
-    { key: "all-classes", label: "All Classes" },
+    { key: "my-timetable", label: "Timetable" },
     { key: "rooms", label: "Live Room Status" },
     { key: "preferences", label: "Submit Preference" },
     { key: "assignments", label: "Classroom" },
@@ -259,8 +259,7 @@ function FacultyDashboard({ onLogout }) {
 
   const pageTitleMap = {
     dashboard: "Faculty Dashboard",
-    "my-timetable": "My Timetable",
-    "all-classes": "All Classes",
+    "my-timetable": "Timetable",
     rooms: "Live Room Status",
     preferences: "Submit Preference",
     assignments: "Classroom",
@@ -560,16 +559,18 @@ function FacultyDashboard({ onLogout }) {
     }
     if (activePage === "conflicts") {
       loadFacultyConflicts();
+      loadInboxMessages();
+      loadFacultyPeerInbox();
     }
     if (activePage === "assignments") {
       loadFacultyAssignments();
       loadFacultyClassrooms();
     }
-    if (activePage === "my-timetable" || activePage === "all-classes") loadFacultyTimetable();
+    if (activePage === "my-timetable") loadFacultyTimetable();
   }, [activePage]);
 
   useEffect(() => {
-    if (activePage === "my-timetable" || activePage === "all-classes") {
+    if (activePage === "my-timetable") {
       loadFacultyTimetable();
     }
   }, [semesterFilter]);
@@ -1794,7 +1795,10 @@ function FacultyDashboard({ onLogout }) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setActivePage("all-classes")}
+                    onClick={() => {
+                      setFacultyTimetableView("institute");
+                      setActivePage("my-timetable");
+                    }}
                     className="w-full rounded-xl border border-sky-300 bg-white px-3 py-2 text-sm font-semibold text-sky-800 transition hover:bg-sky-50"
                   >
                     View All Classes
@@ -1837,21 +1841,96 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "my-timetable") {
+      const dayOrder = { Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6, Sunday: 7 };
+      const toMinutes = (value) => {
+        const text = String(value || "").trim();
+        const [h, m] = text.split(":").map((part) => Number(part));
+        return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : Number.MAX_SAFE_INTEGER;
+      };
+      const sortSlots = (rows = []) =>
+        [...rows].sort(
+          (a, b) =>
+            (dayOrder[a?.day] || 99) - (dayOrder[b?.day] || 99) ||
+            toMinutes(a?.start_time) - toMinutes(b?.start_time) ||
+            String(a?.subject || "").localeCompare(String(b?.subject || ""))
+        );
+      const sortedTodaySchedule = sortSlots(todaySchedule);
+      const sortedFacultyTimetable = sortSlots(facultyTimetable);
+      const sortedInstituteTimetable = sortSlots(instituteTimetable);
+
       return (
         <div className="space-y-5">
-          <div className="rounded-2xl border border-blue-200 bg-gradient-to-r from-white via-blue-50 to-cyan-50 p-6 shadow-[0_18px_36px_-28px_rgba(2,132,199,0.35)]">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h3 className="text-2xl font-semibold tracking-tight text-slate-900">My Timetable</h3>
-                <p className="mt-1 text-sm text-slate-600">See your complete slot allocation and today&apos;s classes.</p>
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="bg-gradient-to-r from-slate-50 via-white to-slate-50 px-5 py-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-semibold tracking-tight text-slate-900">Timetable</h3>
+                  <p className="mt-1 text-sm text-slate-600">View today&apos;s plan or your full weekly timetable.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M8 2v4M16 2v4M3 10h18" />
+                      <rect x="3" y="5" width="18" height="17" rx="2" />
+                    </svg>
+                    <input
+                      value={semesterFilter}
+                      onChange={(e) => setSemesterFilter(e.target.value)}
+                      placeholder="Semester (e.g. Odd 2026)"
+                      className="w-[260px] rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <button
+                    onClick={loadFacultyTimetable}
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+                  >
+                    Refresh
+                  </button>
+                </div>
               </div>
-              <div className="relative">
-                <input
-                  value={semesterFilter}
-                  onChange={(e) => setSemesterFilter(e.target.value)}
-                  placeholder="Semester (e.g. Odd 2026)"
-                  className="w-64 rounded-xl border border-blue-200 bg-white/90 px-4 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                />
+            </div>
+
+            <div className="border-t border-slate-200 px-5 py-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    onClick={() => setFacultyTimetableView("my")}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                      facultyTimetableView === "my" ? "bg-blue-600 text-white shadow-sm" : "text-slate-700 hover:bg-white"
+                    }`}
+                  >
+                    My Timetable
+                  </button>
+                  <button
+                    onClick={() => setFacultyTimetableView("today")}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                      facultyTimetableView === "today" ? "bg-blue-600 text-white shadow-sm" : "text-slate-700 hover:bg-white"
+                    }`}
+                  >
+                    Today&apos;s Plan
+                  </button>
+                  <button
+                    onClick={() => setFacultyTimetableView("institute")}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                      facultyTimetableView === "institute" ? "bg-blue-600 text-white shadow-sm" : "text-slate-700 hover:bg-white"
+                    }`}
+                  >
+                    Institute Timetable
+                  </button>
+                </div>
+                <div className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  <span className="font-medium text-slate-700">Total Slots:</span> {sortedFacultyTimetable.length}
+                  <span className="text-slate-300">|</span>
+                  <span className="font-medium text-slate-700">Today:</span> {sortedTodaySchedule.length}
+                  <span className="text-slate-300">|</span>
+                  <span className="font-medium text-slate-700">Institute:</span> {sortedInstituteTimetable.length}
+                </div>
               </div>
             </div>
           </div>
@@ -1860,111 +1939,184 @@ function FacultyDashboard({ onLogout }) {
             <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{timetableError}</div>
           )}
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_14px_30px_-24px_rgba(15,23,42,0.35)]">
-            <h4 className="text-lg font-semibold tracking-tight text-slate-900">Today&apos;s Teaching Plan</h4>
-            {loadingTimetable ? (
-              <p className="mt-3 text-sm text-slate-500">Loading your classes...</p>
-            ) : todaySchedule.length === 0 ? (
-              <div className="mt-4 rounded-xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-4 py-3">
-                <p className="text-sm font-semibold text-emerald-900">No class assigned for today.</p>
-                <p className="mt-1 text-xs text-emerald-700">Your schedule is clear for today based on the selected semester.</p>
-              </div>
-            ) : (
-              <div className="mt-4 space-y-3">
-                {todaySchedule.map((slot, idx) => (
-                  <div key={`${slot.id || idx}`} className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
-                    <p className="text-sm font-semibold text-slate-900">
-                      {slot.start_time} - {slot.end_time} | {slot.subject}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-600">
-                      Room {slot.room} | {slot.department || "-"} {slot.year || "-"}-{slot.section || "-"}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_14px_30px_-24px_rgba(15,23,42,0.35)]">
-            <h4 className="text-lg font-semibold tracking-tight text-slate-900">Full Faculty Timetable</h4>
-            {loadingTimetable ? (
-              <p className="mt-3 text-sm text-slate-500">Loading timetable...</p>
-            ) : facultyTimetable.length === 0 ? (
-              <div className="mt-4 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 px-4 py-3">
-                <p className="text-sm font-semibold text-amber-900">No published timetable for selected semester.</p>
-                <p className="mt-1 text-xs text-amber-700">Try a different semester value or check with timetable admin.</p>
-              </div>
-            ) : (
-              <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-                <table className="min-w-full overflow-hidden">
-                  <thead className="bg-slate-100">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Day</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Time</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Subject</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Class</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Room</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {facultyTimetable.map((slot, idx) => (
-                      <tr key={`${slot.id || idx}`} className="border-t border-slate-200 bg-white transition hover:bg-blue-50/40">
-                        <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.day}</td>
-                        <td className="px-4 py-3 text-sm text-slate-700">
-                          {slot.start_time} - {slot.end_time}
-                        </td>
-                        <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.subject}</td>
-                        <td className="px-4 py-3 text-sm text-slate-700">
-                          {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-slate-700">{slot.room}</td>
+          {facultyTimetableView === "today" ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h4 className="text-lg font-semibold tracking-tight text-slate-900">Today&apos;s Teaching Plan</h4>
+              {loadingTimetable ? (
+                <p className="mt-3 text-sm text-slate-500">Loading your classes...</p>
+              ) : sortedTodaySchedule.length === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
+                  <p className="text-base font-medium text-slate-700">No class assigned for today.</p>
+                  <p className="mt-1 text-sm text-slate-500">Your schedule is clear for the selected semester.</p>
+                </div>
+              ) : (
+                <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="min-w-full overflow-hidden">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Time</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Subject</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Class</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Room</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                    </thead>
+                    <tbody>
+                      {sortedTodaySchedule.map((slot, idx) => (
+                        <tr key={`${slot.id || idx}`} className="border-t border-slate-200 bg-white transition hover:bg-blue-50/40">
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {slot.start_time} - {slot.end_time}
+                          </td>
+                          <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.subject}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-700">{slot.room}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : facultyTimetableView === "my" ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h4 className="text-lg font-semibold tracking-tight text-slate-900">My Timetable</h4>
+              {loadingTimetable ? (
+                <p className="mt-3 text-sm text-slate-500">Loading timetable...</p>
+              ) : sortedFacultyTimetable.length === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
+                  <p className="text-base font-medium text-slate-700">No timetable published for this filter.</p>
+                  <p className="mt-1 text-sm text-slate-500">Try another semester or switch to today&apos;s view.</p>
+                </div>
+              ) : (
+                <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="min-w-full overflow-hidden">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Day</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Time</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Subject</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Class</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Room</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedFacultyTimetable.map((slot, idx) => (
+                        <tr key={`${slot.id || idx}`} className="border-t border-slate-200 bg-white transition hover:bg-blue-50/40">
+                          <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.day}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {slot.start_time} - {slot.end_time}
+                          </td>
+                          <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.subject}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-700">{slot.room}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h4 className="text-lg font-semibold tracking-tight text-slate-900">Institute Timetable</h4>
+              {loadingTimetable ? (
+                <p className="mt-3 text-sm text-slate-500">Loading timetable...</p>
+              ) : sortedInstituteTimetable.length === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
+                  <p className="text-base font-medium text-slate-700">No timetable published for this filter.</p>
+                  <p className="mt-1 text-sm text-slate-500">Try another semester or switch timetable view.</p>
+                </div>
+              ) : (
+                <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="min-w-full overflow-hidden">
+                    <thead className="bg-slate-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Day</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Time</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Subject</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Faculty</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Class</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">Room</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedInstituteTimetable.map((slot, idx) => (
+                        <tr key={`${slot.id || idx}`} className="border-t border-slate-200 bg-white transition hover:bg-blue-50/40">
+                          <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.day}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {slot.start_time} - {slot.end_time}
+                          </td>
+                          <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.subject}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">{slot.faculty_name || "-"}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">
+                            {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-700">{slot.room}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     }
 
     if (activePage === "all-classes") {
       return (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-800">Institute Timetable</h3>
-              <p className="text-sm text-slate-500 mt-1">View all published classes across departments.</p>
+        <div className="rounded-2xl border border-slate-200 bg-white/95 p-6 shadow-sm">
+          <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-slate-50 via-white to-cyan-50 p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">Faculty View</p>
+                <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">Institute Timetable</h3>
+                <p className="mt-1.5 text-sm text-slate-600">View all published classes across departments.</p>
+              </div>
+              <div className="w-full sm:w-72">
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Filter By Semester
+                </label>
+                <input
+                  value={semesterFilter}
+                  onChange={(e) => setSemesterFilter(e.target.value)}
+                  placeholder="e.g. Odd 2026"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+                />
+              </div>
             </div>
-            <input
-              value={semesterFilter}
-              onChange={(e) => setSemesterFilter(e.target.value)}
-              placeholder="Semester (e.g. Odd 2026)"
-              className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
-            />
           </div>
+
           {loadingTimetable ? (
-            <p className="text-sm text-slate-500 mt-4">Loading...</p>
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/70 p-6 text-center">
+              <p className="text-sm font-medium text-slate-700">Loading timetable...</p>
+            </div>
           ) : instituteTimetable.length === 0 ? (
-            <p className="text-sm text-slate-500 mt-4">No timetable found.</p>
+            <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center">
+              <p className="text-base font-semibold text-slate-800">No timetable found</p>
+              <p className="mt-1.5 text-sm text-slate-600">Try a different semester or clear the filter.</p>
+            </div>
           ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden">
-                <thead className="bg-slate-50">
+            <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
+              <table className="min-w-full">
+                <thead className="bg-slate-100/80">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Day</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Time</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Subject</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Faculty</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Class</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Room</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700">Day</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700">Time</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700">Subject</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700">Faculty</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700">Class</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-700">Room</th>
                   </tr>
                 </thead>
                 <tbody>
                   {instituteTimetable.map((slot, idx) => (
-                    <tr key={`${slot.id || idx}`} className="border-t border-slate-200">
-                      <td className="px-4 py-3 text-sm text-slate-700">{slot.day}</td>
+                    <tr key={`${slot.id || idx}`} className="border-t border-slate-200 hover:bg-slate-50/70">
+                      <td className="px-4 py-3 text-sm font-medium text-slate-800">{slot.day}</td>
                       <td className="px-4 py-3 text-sm text-slate-700">
                         {slot.start_time} - {slot.end_time}
                       </td>
@@ -4608,7 +4760,7 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "rooms") {
-      return <Rooms />;
+      return <Rooms role="faculty" />;
     }
 
     if (activePage === "messages") {
@@ -4766,12 +4918,65 @@ function FacultyDashboard({ onLogout }) {
 
     if (activePage === "conflicts") {
       const statusClasses = {
+        open: "bg-amber-50 text-amber-700 border-amber-200",
+        in_review: "bg-blue-50 text-blue-700 border-blue-200",
         pending: "bg-amber-50 text-amber-700 border-amber-200",
         resolved: "bg-emerald-50 text-emerald-700 border-emerald-200",
       };
+      const conflictAlerts = (inboxMessages || []).filter((msg) => {
+        const subject = String(msg?.subject || "").toLowerCase();
+        return subject.includes("timetable conflict alert");
+      });
+      const directConflictAlerts = (facultyInbox || []).filter((msg) => {
+        const subject = String(msg?.subject || "").toLowerCase();
+        return subject.includes("timetable conflict alert");
+      });
 
       return (
         <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-base font-semibold text-slate-800">System Conflict Alerts</h4>
+              <button
+                type="button"
+                onClick={loadInboxMessages}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Refresh Alerts
+              </button>
+            </div>
+            {loadingInboxMessages || loadingFacultyInbox ? (
+              <p className="text-sm text-slate-500 mt-4">Loading alerts...</p>
+            ) : conflictAlerts.length === 0 && directConflictAlerts.length === 0 ? (
+              <p className="text-sm text-slate-500 mt-4">No system conflict alerts yet.</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {conflictAlerts.map((alert) => (
+                  <div key={`conflict-alert-${alert.id}`} className="rounded-lg border border-amber-200 bg-amber-50/70 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-amber-900">{alert.subject || "Timetable Conflict Alert"}</p>
+                      <span className="text-xs text-amber-700">
+                        {alert.created_at ? new Date(alert.created_at).toLocaleString() : "-"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-amber-800 mt-2 whitespace-pre-wrap">{alert.body}</p>
+                  </div>
+                ))}
+                {directConflictAlerts.map((alert) => (
+                  <div key={`direct-conflict-alert-${alert.id}`} className="rounded-lg border border-blue-200 bg-blue-50/70 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-blue-900">{alert.subject || "Timetable Conflict Alert"}</p>
+                      <span className="text-xs text-blue-700">
+                        {alert.created_at ? new Date(alert.created_at).toLocaleString() : "-"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-blue-800 mt-2 whitespace-pre-wrap">{alert.body}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -4877,6 +5082,38 @@ function FacultyDashboard({ onLogout }) {
                     </p>
                     {item.description && (
                       <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{item.description}</p>
+                    )}
+                    {item.status !== "resolved" && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await PreferenceService.acceptFacultyConflictFix(item.id);
+                              await loadFacultyConflicts();
+                            } catch (err) {
+                              setConflictError(err.response?.data?.message || "Failed to accept fix.");
+                            }
+                          }}
+                          className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                        >
+                          Accept Fix
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await PreferenceService.requestFacultyConflictManualReview(item.id);
+                              await loadFacultyConflicts();
+                            } catch (err) {
+                              setConflictError(err.response?.data?.message || "Failed to request manual review.");
+                            }
+                          }}
+                          className="rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                        >
+                          Request Manual Review
+                        </button>
+                      </div>
                     )}
                     {item.resolved_at && (
                       <p className="text-xs text-emerald-700 mt-2">

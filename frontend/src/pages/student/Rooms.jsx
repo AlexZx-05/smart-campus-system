@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import PreferenceService from "../../services/PreferenceService";
 
-function Rooms() {
+function Rooms({ role = "student" }) {
   const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const [semester, setSemester] = useState("");
   const [search, setSearch] = useState("");
@@ -26,9 +26,14 @@ function Rooms() {
     }
     setError("");
     try {
+      const isFaculty = role === "faculty";
       const [livePayload, timetablePayload] = await Promise.all([
-        PreferenceService.getStudentRoomLiveStatus(semester || undefined),
-        PreferenceService.getStudentInstituteTimetable(semester || undefined),
+        isFaculty
+          ? PreferenceService.getFacultyRoomLiveStatus(semester || undefined)
+          : PreferenceService.getStudentRoomLiveStatus(semester || undefined),
+        isFaculty
+          ? PreferenceService.getFacultyInstituteTimetable(semester || undefined)
+          : PreferenceService.getStudentInstituteTimetable(semester || undefined),
       ]);
       setData(livePayload || null);
       setInstituteSlots(Array.isArray(timetablePayload) ? timetablePayload : []);
@@ -142,7 +147,9 @@ function Rooms() {
             <div>
               <h3 className="text-2xl font-semibold tracking-tight text-slate-900">Room Availability</h3>
               <p className="mt-1 text-sm text-slate-600">
-                Live classroom status from published timetable. Students can see which class is running now in each room.
+                {role === "faculty"
+                  ? "Live classroom status from published timetable. Faculty can monitor running and upcoming classes by room."
+                  : "Live classroom status from published timetable. Students can see which class is running now in each room."}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">

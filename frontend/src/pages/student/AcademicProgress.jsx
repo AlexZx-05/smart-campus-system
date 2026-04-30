@@ -3,7 +3,7 @@ import PreferenceService from "../../services/PreferenceService";
 import DashboardService from "../../services/DashboardService";
 import Card from "../../components/Card";
 
-function AcademicProgress({ onOpenAttendance }) {
+function AcademicProgress({ onOpenAttendance, onOpenCredits }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [attendance, setAttendance] = useState(null);
@@ -216,7 +216,13 @@ function AcademicProgress({ onOpenAttendance }) {
           onClick={onOpenAttendance}
           className="border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-100/70 shadow-[0_18px_36px_-26px_rgba(5,150,105,0.42)]"
         />
-        <Card title="Estimated CGPA" value={cgpaEstimate !== null ? cgpaEstimate.toFixed(2) : "-"} subtitle="From reviewed grades" className="border-indigo-200 bg-gradient-to-br from-white via-indigo-50 to-blue-100/70 shadow-[0_18px_36px_-26px_rgba(79,70,229,0.35)]" />
+        <Card
+          title="Estimated CGPA"
+          value={cgpaEstimate !== null ? cgpaEstimate.toFixed(2) : "-"}
+          subtitle="From reviewed grades"
+          onClick={onOpenCredits}
+          className="border-indigo-200 bg-gradient-to-br from-white via-indigo-50 to-blue-100/70 shadow-[0_18px_36px_-26px_rgba(79,70,229,0.35)]"
+        />
         <Card title="Reviewed Items" value={String(reviewCount)} subtitle="Teacher-reviewed submissions" className="border-amber-200 bg-gradient-to-br from-white via-amber-50 to-orange-100/65 shadow-[0_18px_36px_-26px_rgba(217,119,6,0.35)]" />
         <Card title="Teachers Reporting" value={String(teachersWithUpdates)} subtitle="Distinct teachers with updates" className="border-sky-200 bg-gradient-to-br from-white via-sky-50 to-cyan-100/70 shadow-[0_18px_36px_-26px_rgba(14,116,144,0.35)]" />
       </div>

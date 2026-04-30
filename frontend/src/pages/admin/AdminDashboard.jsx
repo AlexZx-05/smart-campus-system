@@ -337,7 +337,7 @@ function AdminDashboard({ onLogout }) {
     setLoadingConflicts(true);
     setPreferencesError("");
     try {
-      const data = await PreferenceService.getAdminConflicts("pending");
+      const data = await PreferenceService.getAdminConflicts();
       setConflicts(data || []);
     } catch (err) {
       setPreferencesError(err.response?.data?.message || "Failed to load conflicts.");
@@ -653,6 +653,16 @@ function AdminDashboard({ onLogout }) {
       await loadDashboardOverview();
     } catch (err) {
       setPreferencesError(err.response?.data?.message || "Failed to resolve conflict.");
+    }
+  };
+
+  const handleReviewConflict = async (conflictId) => {
+    try {
+      await PreferenceService.markAdminConflictInReview(conflictId);
+      await loadConflicts();
+      await loadDashboardOverview();
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to mark conflict in review.");
     }
   };
 
@@ -1880,6 +1890,13 @@ function AdminDashboard({ onLogout }) {
     }
 
     if (activePage === "conflicts") {
+      const statusClasses = {
+        open: "border-amber-200 bg-amber-50 text-amber-700",
+        pending: "border-amber-200 bg-amber-50 text-amber-700",
+        in_review: "border-blue-200 bg-blue-50 text-blue-700",
+        resolved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+        closed: "border-slate-300 bg-slate-100 text-slate-700",
+      };
       return (
         <div className="space-y-4">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1932,13 +1949,29 @@ function AdminDashboard({ onLogout }) {
                   <div key={conflict.id} className="rounded-lg border border-slate-200 p-4">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-slate-800">{conflict.title}</p>
-                      <button
-                        type="button"
-                        onClick={() => handleResolveConflict(conflict.id)}
-                        className="rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-2.5 py-1 text-xs"
-                      >
-                        Resolve
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClasses[conflict.status] || "border-slate-300 bg-slate-100 text-slate-700"}`}>
+                          {conflict.status || "open"}
+                        </span>
+                        {conflict.status !== "resolved" && (
+                          <button
+                            type="button"
+                            onClick={() => handleReviewConflict(conflict.id)}
+                            className="rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 px-2.5 py-1 text-xs"
+                          >
+                            In Review
+                          </button>
+                        )}
+                        {conflict.status !== "resolved" && (
+                          <button
+                            type="button"
+                            onClick={() => handleResolveConflict(conflict.id)}
+                            className="rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-2.5 py-1 text-xs"
+                          >
+                            Resolve
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {conflict.description && <p className="text-sm text-slate-600 mt-2">{conflict.description}</p>}
                     <p className="text-xs text-slate-500 mt-2">
