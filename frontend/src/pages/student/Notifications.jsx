@@ -31,23 +31,54 @@ const timeAgo = (iso) => {
   return `${days} day${days > 1 ? "s" : ""} ago`;
 };
 
-function Notifications() {
+const renderTextWithLinks = (text = "", onLinkClick) => {
+  const value = String(text || "");
+  const urlRegex = /(https?:\/\/[^\s]+)/gi;
+  const parts = value.split(urlRegex);
+  return parts.map((part, index) => {
+    if (urlRegex.test(part)) {
+      return (
+        <a
+          key={`lnk-${index}`}
+          href={part}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => onLinkClick?.()}
+          className="font-medium text-blue-700 underline decoration-blue-400 underline-offset-2 hover:text-blue-800"
+        >
+          {part}
+        </a>
+      );
+    }
+    return <span key={`txt-${index}`}>{part}</span>;
+  });
+};
+
+function Notifications({ onJoinClassroomRequested }) {
   const [messages, setMessages] = useState([]);
   const [assignmentReminders, setAssignmentReminders] = useState([]);
+  const [joinedClassrooms, setJoinedClassrooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
+  const [pendingJoinInvite, setPendingJoinInvite] = useState(null);
+  const [joiningClassroom, setJoiningClassroom] = useState(false);
+  const [joinMessage, setJoinMessage] = useState("");
+  const [joinError, setJoinError] = useState("");
+  const [nowMs, setNowMs] = useState(Date.now());
 
   const loadMessages = async () => {
     setLoading(true);
     setError("");
     try {
-      const [data, reminders] = await Promise.all([
+      const [data, reminders, joined] = await Promise.all([
         PreferenceService.getInboxMessages(),
         PreferenceService.getStudentAssignmentReminders(),
+        PreferenceService.getStudentJoinedClassrooms(),
       ]);
       setMessages(data || []);
       setAssignmentReminders(reminders || []);
+      setJoinedClassrooms(joined || []);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to load notifications.");
     } finally {
@@ -57,6 +88,11 @@ function Notifications() {
 
   useEffect(() => {
     loadMessages();
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 30000);
+    return () => clearInterval(timer);
   }, []);
 
   const feedItems = useMemo(() => {
@@ -70,25 +106,41 @@ function Notifications() {
       typeLabel: "Teacher Message",
     }));
 
-    const inboxItems = (messages || []).map((msg) => ({
-      id: `msg-${msg.id}`,
-      actorName: msg.sender_name || "Admin",
-      actionText: "sent an announcement",
-      bodyText: msg.body || msg.subject || "",
-      createdAt: msg.created_at,
-      kind: "admin",
-      typeLabel: "Admin Announcement",
-      subject: msg.subject || "",
-    }));
+    const inboxItems = (messages || []).map((msg) => {
+      if (msg?.kind === "classroom_invite") {
+        return {
+          id: `msg-${msg.id}`,
+          actorName: msg.sender_name || "Faculty",
+          actionText: "invited you to a classroom",
+          bodyText: msg.body || msg.subject || "",
+          createdAt: msg.created_at,
+          kind: "classroom_invite",
+          typeLabel: "Classroom Invite",
+          subject: msg.subject || "",
+          classroomId: msg.classroom_id,
+          joinLink: msg.join_link || "",
+        };
+      }
+      return {
+        id: `msg-${msg.id}`,
+        actorName: msg.sender_name || "Admin",
+        actionText: "sent an announcement",
+        bodyText: msg.body || msg.subject || "",
+        createdAt: msg.created_at,
+        kind: "admin",
+        typeLabel: "Admin Announcement",
+        subject: msg.subject || "",
+      };
+    });
 
     return [...inboxItems, ...reminderItems].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [messages, assignmentReminders]);
+  }, [messages, assignmentReminders, nowMs]);
 
   const counts = useMemo(() => {
     const admin = feedItems.filter((item) => item.kind === "admin").length;
-    const teacher = feedItems.filter((item) => item.kind === "teacher").length;
+    const teacher = feedItems.filter((item) => item.kind === "teacher" || item.kind === "classroom_invite").length;
     return {
       all: feedItems.length,
       admin,
@@ -98,9 +150,33 @@ function Notifications() {
 
   const visibleItems = useMemo(() => {
     if (activeFilter === "admin") return feedItems.filter((item) => item.kind === "admin");
-    if (activeFilter === "teacher") return feedItems.filter((item) => item.kind === "teacher");
+    if (activeFilter === "teacher") return feedItems.filter((item) => item.kind === "teacher" || item.kind === "classroom_invite");
     return feedItems;
   }, [feedItems, activeFilter]);
+
+  const joinedClassroomIdSet = useMemo(
+    () => new Set((joinedClassrooms || []).map((row) => String(row?.id))),
+    [joinedClassrooms]
+  );
+
+  const confirmJoinClassroom = async () => {
+    if (!pendingJoinInvite?.classroomId) return;
+    setJoiningClassroom(true);
+    setJoinError("");
+    setJoinMessage("");
+    try {
+      const res = await PreferenceService.joinStudentClassroom(pendingJoinInvite.classroomId);
+      setJoinMessage(res?.message || "Joined classroom successfully.");
+      setPendingJoinInvite(null);
+      if (typeof onJoinClassroomRequested === "function") {
+        onJoinClassroomRequested(pendingJoinInvite.classroomId);
+      }
+    } catch (err) {
+      setJoinError(err.response?.data?.message || "Failed to join classroom.");
+    } finally {
+      setJoiningClassroom(false);
+    }
+  };
 
   return (
     <div className="w-full space-y-3">
@@ -200,17 +276,66 @@ function Notifications() {
                           className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold ${
                             item.kind === "admin"
                               ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : item.kind === "classroom_invite"
+                              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
                               : "border-emerald-200 bg-emerald-50 text-emerald-700"
                           }`}
                         >
                           {item.typeLabel}
                         </span>
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[12px] font-semibold text-slate-500">{timeAgo(item.createdAt)}</span>
+                        <span
+                          className="rounded-full bg-slate-100 px-2.5 py-1 text-[12px] font-semibold text-slate-500"
+                          title={item.createdAt ? new Date(item.createdAt).toLocaleString() : ""}
+                        >
+                          {timeAgo(item.createdAt)}
+                        </span>
                       </div>
                     </div>
                     <div className="mt-1 max-w-[1360px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5">
-                      <p className="line-clamp-2 text-[13.5px] leading-5.5 text-slate-800">{item.bodyText}</p>
+                      <p className="line-clamp-2 break-words text-[13.5px] leading-5.5 text-slate-800">
+                        {renderTextWithLinks(item.bodyText, () => {
+                          if (item.kind === "classroom_invite" && item.classroomId) {
+                            onJoinClassroomRequested?.(item.classroomId);
+                          }
+                        })}
+                      </p>
                     </div>
+                    {item.kind === "classroom_invite" && item.classroomId && (
+                      <div className="mt-2 flex items-center gap-2">
+                        {joinedClassroomIdSet.has(String(item.classroomId)) ? (
+                          <button
+                            type="button"
+                            onClick={() => onJoinClassroomRequested?.(item.classroomId)}
+                            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                          >
+                            Open Classroom
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setJoinMessage("");
+                              setJoinError("");
+                              setPendingJoinInvite(item);
+                            }}
+                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-700"
+                          >
+                            Join Classroom
+                          </button>
+                        )}
+                        {item.joinLink && (
+                          <a
+                            href={item.joinLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => onJoinClassroomRequested?.(item.classroomId)}
+                            className="text-xs font-medium text-indigo-700 underline-offset-2 hover:underline"
+                          >
+                            Open Join Link
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </article>
@@ -218,6 +343,51 @@ function Notifications() {
           </div>
         )}
       </div>
+
+      {joinMessage && (
+        <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+          {joinMessage}
+        </div>
+      )}
+      {joinError && (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          {joinError}
+        </div>
+      )}
+
+      {pendingJoinInvite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 px-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <h4 className="text-lg font-semibold text-slate-900">Join Classroom</h4>
+            <p className="mt-2 text-sm text-slate-700">
+              Do you want to join this classroom now? Once joined, it will appear in your Classrooms section.
+            </p>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              {pendingJoinInvite.subject || "Classroom Invite"}
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingJoinInvite(null)}
+                disabled={joiningClassroom}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmJoinClassroom}
+                disabled={joiningClassroom}
+                className={`rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 ${
+                  joiningClassroom ? "cursor-not-allowed opacity-60" : ""
+                }`}
+              >
+                {joiningClassroom ? "Joining..." : "Join Classroom"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

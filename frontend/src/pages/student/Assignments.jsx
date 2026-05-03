@@ -184,6 +184,29 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     () => assignments.find((item) => item.id === selectedAssignmentId) || null,
     [assignments, selectedAssignmentId]
   );
+  const approvedGradeRows = useMemo(
+    () =>
+      (assignments || []).filter(
+        (item) => item.my_submission?.grade_visible_to_student && (item.my_submission?.grade || item.my_submission?.total_marks_awarded != null)
+      ),
+    [assignments]
+  );
+  const overallMarksSummary = useMemo(() => {
+    const totals = approvedGradeRows.reduce(
+      (acc, item) => {
+        const scored = Number(item.my_submission?.total_marks_awarded);
+        const outOf = Number(item.my_submission?.total_marks_out_of);
+        if (!Number.isNaN(scored) && !Number.isNaN(outOf) && outOf > 0) {
+          acc.scored += scored;
+          acc.outOf += outOf;
+        }
+        return acc;
+      },
+      { scored: 0, outOf: 0 }
+    );
+    const percentage = totals.outOf > 0 ? (totals.scored / totals.outOf) * 100 : null;
+    return { ...totals, percentage };
+  }, [approvedGradeRows]);
   const inviteCards = useMemo(() => classroomInvites, [classroomInvites]);
   const joinedCards = useMemo(() => joinedClassrooms, [joinedClassrooms]);
   const filteredClassroomCards = useMemo(() => {
@@ -373,6 +396,20 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                 </div>
               </div>
 
+              <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-white to-slate-50 p-5 shadow-[0_16px_32px_-26px_rgba(15,23,42,0.42)]">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-base font-semibold text-slate-900">Classroom Overview</h4>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    Teacher Description
+                  </span>
+                </div>
+                {detailRoom.description ? (
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{detailRoom.description}</p>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">Teacher has not added a classroom overview yet.</p>
+                )}
+              </div>
+
               <div className="grid gap-5 lg:grid-cols-[250px_1fr]">
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_16px_32px_-26px_rgba(15,23,42,0.42)]">
                   <p className="text-2xl font-semibold text-slate-900">Upcoming</p>
@@ -490,6 +527,14 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                           <p className="mt-2 text-[1.02rem] text-slate-500">
                             {assignment.subject || detailRoom.subject || "Classwork"}
                           </p>
+                          {assignment.my_submission?.grade_visible_to_student && (
+                            <p className="mt-1 text-sm font-semibold text-emerald-700">
+                              {assignment.my_submission?.grade ? `Grade ${assignment.my_submission.grade}` : "Grade published"}
+                              {assignment.my_submission?.total_marks_awarded != null &&
+                                assignment.my_submission?.total_marks_out_of != null &&
+                                ` | ${assignment.my_submission.total_marks_awarded}/${assignment.my_submission.total_marks_out_of}`}
+                            </p>
+                          )}
                         </div>
                         <p className="shrink-0 text-[1.05rem] font-medium text-slate-700">
                           {formatDueDate(assignment.due_at)}
@@ -821,6 +866,13 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                     </p>
                   )}
 
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Classroom Overview</p>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-700">
+                      {room.description || "Teacher has not added classroom overview yet."}
+                    </p>
+                  </div>
+
                   <div className="pt-1.5">
                     <div
                       className="relative flex items-center justify-end gap-2"
@@ -840,19 +892,42 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                           <path d="m14.5 16 1.5 1.5 2.5-3" />
                         </svg>
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openClassroomDetail(room, getStableClassroomThemeIndex(room));
-                        }}
-                        className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      <a
+                        href={room.drive_link || room.join_link || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className={`rounded-lg p-1.5 transition ${
+                          room.drive_link || room.join_link
+                            ? "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                            : "cursor-not-allowed text-slate-300"
+                        }`}
                         aria-label="Open classroom folder"
+                        title={room.drive_link ? "Open Google Drive" : "Drive link not added by teacher"}
                       >
                         <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
                         </svg>
-                      </button>
+                      </a>
+                      <a
+                        href={room.meet_link || room.join_link || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className={`rounded-lg p-1.5 transition ${
+                          room.meet_link || room.join_link
+                            ? "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                            : "cursor-not-allowed text-slate-300"
+                        }`}
+                        aria-label="Open classroom cloud overview"
+                        title={room.meet_link ? "Join Google Meet" : "Meet link not added by teacher"}
+                      >
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M7 18a4 4 0 0 1-.4-8A5 5 0 0 1 16.3 8a3.8 3.8 0 0 1 .7 7.5" />
+                          <path d="M12 12v7" />
+                          <path d="m9.5 16.5 2.5 2.5 2.5-2.5" />
+                        </svg>
+                      </a>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -892,20 +967,20 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                           </button>
                         )}
                         <a
-                          href={room.join_link || "#"}
+                          href={room.meet_link || room.join_link || "#"}
                           target="_blank"
                           rel="noreferrer"
                           className="block w-full rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
                         >
-                          Open Link
+                          Open Meet
                         </a>
                         <a
-                          href={room.join_link || "#"}
+                          href={room.drive_link || room.join_link || "#"}
                           target="_blank"
                           rel="noreferrer"
                           className="block w-full rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
                         >
-                          View Work
+                          Open Drive
                         </a>
                       </div>
                     )}
@@ -947,6 +1022,26 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
           <p className="text-sm text-slate-500">Loading assignments...</p>
         </div>
       ) : assignments.length > 0 ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Published Results</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{approvedGradeRows.length}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Overall Marks</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">
+                {overallMarksSummary.outOf > 0 ? `${overallMarksSummary.scored.toFixed(2)} / ${overallMarksSummary.outOf.toFixed(2)}` : "-"}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Overall Percentage</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">
+                {overallMarksSummary.percentage != null ? `${overallMarksSummary.percentage.toFixed(2)}%` : "-"}
+              </p>
+            </div>
+          </div>
+
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           <div className="xl:col-span-2 space-y-3">
             {assignments.map((assignment) => (
@@ -1062,12 +1157,46 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                       Last uploaded file: {selectedAssignment.my_submission.attachment_name}
                     </a>
                   )}
+                  {selectedAssignment.my_submission?.admin_review_status === "pending" &&
+                    (selectedAssignment.my_submission?.grade || selectedAssignment.my_submission?.teacher_feedback) && (
+                      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+                        <p className="text-xs font-semibold text-amber-700">Awaiting Admin Confirmation</p>
+                        <p className="mt-1 text-xs text-amber-800">
+                          Teacher reviewed your submission. Grade and detailed feedback will appear after admin approval.
+                        </p>
+                      </div>
+                    )}
                   {selectedAssignment.my_submission?.teacher_feedback && (
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                       <p className="text-xs font-semibold text-slate-700">Teacher Feedback</p>
                       <p className="text-sm text-slate-700 mt-1">
                         {selectedAssignment.my_submission.teacher_feedback}
                       </p>
+                    </div>
+                  )}
+                  {selectedAssignment.my_submission?.grade_visible_to_student && selectedAssignment.my_submission?.grade && (
+                    <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+                      <p className="text-xs font-semibold text-emerald-700">Final Grade</p>
+                      <p className="mt-1 text-base font-semibold text-emerald-900">{selectedAssignment.my_submission.grade}</p>
+                      {selectedAssignment.my_submission?.total_marks_awarded != null &&
+                        selectedAssignment.my_submission?.total_marks_out_of != null && (
+                          <p className="mt-1 text-sm text-emerald-900">
+                            Total: {selectedAssignment.my_submission.total_marks_awarded} / {selectedAssignment.my_submission.total_marks_out_of}
+                          </p>
+                        )}
+                      {Array.isArray(selectedAssignment.my_submission?.section_grades) &&
+                        selectedAssignment.my_submission.section_grades.length > 0 && (
+                          <div className="mt-2 rounded-md border border-emerald-200 bg-white p-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Section-wise Marks</p>
+                            <div className="mt-1 space-y-1">
+                              {selectedAssignment.my_submission.section_grades.map((item, idx) => (
+                                <p key={`section-grade-${idx}`} className="text-xs text-emerald-900">
+                                  {item.section}: {item.marks_awarded} / {item.marks_out_of}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                     </div>
                   )}
                   <button
@@ -1083,6 +1212,7 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
               </div>
             )}
           </div>
+        </div>
         </div>
       ) : null}
     </div>

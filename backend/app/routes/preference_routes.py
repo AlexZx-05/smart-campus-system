@@ -22,6 +22,9 @@ from app.models import (
     ClassroomMembership,
     Event,
     FacultyPreference,
+    FacultyChatGroup,
+    FacultyChatGroupMember,
+    FacultyChatGroupMessage,
     FacultyPeerMessage,
     Room,
     SupportQuery,
@@ -69,17 +72,135 @@ def _normalize_day(value):
     return day
 
 
+def _time_to_minutes(value):
+    text = str(value or "").strip()
+    if ":" not in text:
+        return None
+    parts = text.split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        hh = int(parts[0])
+        mm = int(parts[1])
+    except (TypeError, ValueError):
+        return None
+    if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+        return None
+    return hh * 60 + mm
+
+
+def _day_rank(day):
+    order = {
+        "Monday": 0,
+        "Tuesday": 1,
+        "Wednesday": 2,
+        "Thursday": 3,
+        "Friday": 4,
+        "Saturday": 5,
+        "Sunday": 6,
+    }
+    return order.get(day, 99)
+
+
+def _minutes_until_slot(now, slot_day, slot_start_time):
+    start_minutes = _time_to_minutes(slot_start_time)
+    if start_minutes is None:
+        return None
+    now_day_rank = now.weekday()
+    slot_day_rank = _day_rank(slot_day)
+    if slot_day_rank == 99:
+        return None
+    day_delta = (slot_day_rank - now_day_rank) % 7
+    now_minutes = now.hour * 60 + now.minute
+    delta = day_delta * 24 * 60 + (start_minutes - now_minutes)
+    if delta < 0:
+        delta += 7 * 24 * 60
+    return delta
+
+
 def _parse_int(value):
     if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
         return None
 
 
 def _normalize_email(value):
     return (value or "").strip().lower()
-    try:
-        return int(value)
-    except (TypeError, ValueError):
+
+
+def _normalize_join_link(value):
+    raw = (value or "").strip()
+    if not raw:
+        return "https://classroom.google.com"
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    return f"https://{raw}"
+
+
+def _normalize_optional_link(value):
+    raw = (value or "").strip()
+    if not raw:
         return None
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    return f"https://{raw}"
+
+
+def _clean_classroom_description(value):
+    text = (value or "").strip()
+    if not text:
+        return None
+    stop_markers = [
+        "\nIf you want, I can also update",
+        "\nUser attachment",
+        "\nWorked for",
+        "\nWhat I fixed",
+        "\nUpdated files",
+        "\nValidation",
+        "\nImportant",
+        "\ncd backend",
+    ]
+    cleaned = text
+    for marker in stop_markers:
+        idx = cleaned.find(marker)
+        if idx != -1:
+            cleaned = cleaned[:idx].strip()
+    return cleaned or None
+
+
+def _save_chat_attachment(file_obj):
+    if not file_obj or not file_obj.filename:
+        return None, None, None
+    safe_name = secure_filename(file_obj.filename)
+    if not safe_name:
+        raise ValueError("Invalid attachment filename")
+
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+    allowed_doc_ext = {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "zip", "rar"}
+    allowed_image_ext = {"png", "jpg", "jpeg", "webp", "gif"}
+    allowed_video_ext = {"mp4", "mov", "webm", "avi", "mkv", "m4v"}
+    allowed_ext = allowed_doc_ext | allowed_image_ext | allowed_video_ext
+    if ext not in allowed_ext:
+        raise ValueError("Attachment must be a document, image, or video file")
+
+    mime = (file_obj.mimetype or "").lower()
+    allowed_mime_prefix = ("application/", "image/", "video/", "text/")
+    if mime and not mime.startswith(allowed_mime_prefix):
+        raise ValueError("Unsupported attachment type")
+
+    file_obj.stream.seek(0, os.SEEK_END)
+    size_bytes = file_obj.stream.tell()
+    file_obj.stream.seek(0)
+    if size_bytes > 25 * 1024 * 1024:
+        raise ValueError("Attachment size must be 25 MB or less")
+
+    unique_name = f"chat_{uuid.uuid4().hex}_{safe_name}"
+    upload_path = os.path.join(current_app.config["UPLOAD_FOLDER"], unique_name)
+    file_obj.save(upload_path)
+    return f"/uploads/{unique_name}", safe_name, mime or None
 
 
 def _select_room(student_count):
@@ -184,6 +305,9 @@ def _serialize_faculty_profile(user):
         "department": user.department,
         "profile_image": user.profile_image,
         "profile_image_url": image_url,
+        "faculty_mail_sender_email": user.faculty_mail_sender_email,
+        "faculty_mail_notifications_enabled": bool(user.faculty_mail_notifications_enabled),
+        "faculty_mail_connected": bool(user.faculty_mail_sender_email and user.faculty_mail_app_password),
     }
 
 
@@ -232,6 +356,39 @@ def _serialize_admin_message(message):
     }
 
 
+def _serialize_classroom_invite_notification(classroom, faculty, created_at_override=None):
+    class_scope = " / ".join(
+        [
+            classroom.department or "-",
+            str(classroom.year or "-"),
+            classroom.section or "-",
+        ]
+    )
+    semester_text = classroom.semester or "Current Semester"
+    return {
+        "id": f"classroom-invite-{classroom.id}",
+        "sender_id": faculty.id if faculty else classroom.faculty_id,
+        "sender_name": faculty.name if faculty else "Faculty",
+        "recipient_role": "student",
+        "subject": f"New Classroom Invite: {classroom.subject}",
+        "body": (
+            f"You have been invited to join '{classroom.title}'.\n"
+            f"Subject: {classroom.subject}\n"
+            f"Class: {class_scope}\n"
+            f"Semester: {semester_text}\n"
+            f"Join Link: {classroom.join_link}"
+        ),
+        "created_at": (
+            created_at_override.isoformat()
+            if created_at_override
+            else (classroom.created_at.isoformat() if classroom.created_at else None)
+        ),
+        "kind": "classroom_invite",
+        "classroom_id": classroom.id,
+        "join_link": classroom.join_link,
+    }
+
+
 def _serialize_faculty_directory_user(user):
     image_url = None
     if user.profile_image:
@@ -250,6 +407,9 @@ def _serialize_faculty_directory_user(user):
 def _serialize_faculty_peer_message(row):
     sender = User.query.get(row.sender_id)
     recipient = User.query.get(row.recipient_id)
+    attachment_url = None
+    if row.attachment_path:
+        attachment_url = f"{request.host_url.rstrip('/')}{row.attachment_path}"
     return {
         "id": row.id,
         "sender_id": row.sender_id,
@@ -260,7 +420,71 @@ def _serialize_faculty_peer_message(row):
         "recipient_email": recipient.email if recipient else None,
         "subject": row.subject,
         "body": row.body,
+        "attachment_path": row.attachment_path,
+        "attachment_name": row.attachment_name,
+        "attachment_mime": row.attachment_mime,
+        "attachment_url": attachment_url,
         "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _serialize_faculty_group_message(row):
+    sender = User.query.get(row.sender_id)
+    attachment_url = None
+    if row.attachment_path:
+        attachment_url = f"{request.host_url.rstrip('/')}{row.attachment_path}"
+    return {
+        "id": row.id,
+        "group_id": row.group_id,
+        "sender_id": row.sender_id,
+        "sender_name": sender.name if sender else "Faculty",
+        "sender_email": sender.email if sender else None,
+        "body": row.body,
+        "attachment_path": row.attachment_path,
+        "attachment_name": row.attachment_name,
+        "attachment_mime": row.attachment_mime,
+        "attachment_url": attachment_url,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _serialize_faculty_group(row):
+    members = (
+        FacultyChatGroupMember.query
+        .filter(FacultyChatGroupMember.group_id == row.id)
+        .all()
+    )
+    member_ids = [m.faculty_id for m in members]
+    member_users = User.query.filter(User.id.in_(member_ids)).all() if member_ids else []
+    latest = (
+        FacultyChatGroupMessage.query
+        .filter(FacultyChatGroupMessage.group_id == row.id)
+        .order_by(FacultyChatGroupMessage.created_at.desc())
+        .first()
+    )
+    creator = User.query.get(row.created_by)
+    return {
+        "id": row.id,
+        "name": row.name,
+        "created_by": row.created_by,
+        "created_by_name": creator.name if creator else "Faculty",
+        "members": [
+            {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "department": user.department,
+                "profile_image_url": (
+                    f"{request.host_url.rstrip('/')}{user.profile_image}"
+                    if user.profile_image
+                    else None
+                ),
+            }
+            for user in member_users
+        ],
+        "latest_message": _serialize_faculty_group_message(latest) if latest else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
 
@@ -464,12 +688,85 @@ def _serialize_links(value):
     return []
 
 
+def _serialize_section_grades(value):
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    payload = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        section = str(item.get("section") or "").strip()
+        if not section:
+            continue
+        marks_awarded = item.get("marks_awarded")
+        marks_out_of = item.get("marks_out_of")
+        try:
+            marks_awarded_num = float(marks_awarded)
+            marks_out_of_num = float(marks_out_of)
+        except (TypeError, ValueError):
+            continue
+        payload.append({
+            "section": section,
+            "marks_awarded": round(marks_awarded_num, 2),
+            "marks_out_of": round(marks_out_of_num, 2),
+        })
+    return payload
+
+
+def _clean_section_grades(value):
+    if value is None:
+        return []
+    items = value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        try:
+            items = json.loads(raw)
+        except json.JSONDecodeError:
+            raise ValueError("section_grades must be valid JSON")
+    if not isinstance(items, list):
+        raise ValueError("section_grades must be an array")
+
+    cleaned = []
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"section_grades[{idx}] must be an object")
+        section = str(item.get("section") or "").strip()
+        if not section:
+            raise ValueError(f"section_grades[{idx}].section is required")
+        marks_awarded = item.get("marks_awarded")
+        marks_out_of = item.get("marks_out_of")
+        try:
+            marks_awarded = float(marks_awarded)
+            marks_out_of = float(marks_out_of)
+        except (TypeError, ValueError):
+            raise ValueError(f"section_grades[{idx}] marks must be numeric")
+        if marks_awarded < 0 or marks_out_of <= 0:
+            raise ValueError(f"section_grades[{idx}] marks must be non-negative and out_of > 0")
+        if marks_awarded > marks_out_of:
+            raise ValueError(f"section_grades[{idx}] awarded marks cannot exceed out_of")
+        cleaned.append({
+            "section": section[:80],
+            "marks_awarded": round(marks_awarded, 2),
+            "marks_out_of": round(marks_out_of, 2),
+        })
+    return cleaned
+
+
 def _serialize_submission_for_student(submission):
     if not submission:
         return None
     file_url = None
     if submission.attachment_path:
         file_url = f"{request.host_url.rstrip('/')}{submission.attachment_path}"
+    is_approved = (submission.admin_review_status or "pending") == "approved"
     return {
         "id": submission.id,
         "assignment_id": submission.assignment_id,
@@ -481,8 +778,13 @@ def _serialize_submission_for_student(submission):
         "attachment_mime": submission.attachment_mime,
         "attachment_url": file_url,
         "status": submission.status,
-        "teacher_feedback": submission.teacher_feedback,
-        "grade": submission.grade,
+        "teacher_feedback": submission.teacher_feedback if is_approved else None,
+        "grade": submission.grade if is_approved else None,
+        "section_grades": _serialize_section_grades(submission.section_grades) if is_approved else [],
+        "total_marks_awarded": submission.total_marks_awarded if is_approved else None,
+        "total_marks_out_of": submission.total_marks_out_of if is_approved else None,
+        "admin_review_status": submission.admin_review_status or "pending",
+        "grade_visible_to_student": is_approved,
         "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
         "updated_at": submission.updated_at.isoformat() if submission.updated_at else None,
     }
@@ -550,6 +852,12 @@ def _serialize_submission_for_faculty(submission):
         "status": submission.status,
         "teacher_feedback": submission.teacher_feedback,
         "grade": submission.grade,
+        "section_grades": _serialize_section_grades(submission.section_grades),
+        "total_marks_awarded": submission.total_marks_awarded,
+        "total_marks_out_of": submission.total_marks_out_of,
+        "admin_review_status": submission.admin_review_status or "pending",
+        "admin_reviewed_by": submission.admin_reviewed_by,
+        "admin_reviewed_at": submission.admin_reviewed_at.isoformat() if submission.admin_reviewed_at else None,
         "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
         "updated_at": submission.updated_at.isoformat() if submission.updated_at else None,
     }
@@ -601,8 +909,10 @@ def _serialize_classroom(row):
         "department": row.department,
         "year": row.year,
         "section": row.section,
-        "description": row.description,
+        "description": _clean_classroom_description(row.description),
         "join_link": row.join_link,
+        "drive_link": row.drive_link,
+        "meet_link": row.meet_link,
         "cover_image_path": row.cover_image_path,
         "cover_image_name": row.cover_image_name,
         "cover_image_mime": row.cover_image_mime,
@@ -780,6 +1090,132 @@ def _send_assignment_reminder_email(student, faculty, assignment):
         server.login(smtp_user, smtp_pass)
         server.send_message(msg)
     return True
+
+
+def _parse_selected_student_emails(raw_value):
+    if raw_value is None:
+        return []
+    if isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = [part.strip() for part in text.split(",") if part.strip()]
+    elif isinstance(raw_value, list):
+        parsed = raw_value
+    else:
+        parsed = []
+
+    result = []
+    for item in parsed:
+        email = _normalize_email(item)
+        if email and "@" in email and "." in email.split("@")[-1]:
+            result.append(email)
+    return sorted(set(result))
+
+
+def _get_target_students_for_classroom(classroom, selected_emails=None):
+    selected_set = set(selected_emails or [])
+    targeted_ids = set()
+    selected_ids = set()
+
+    query = User.query.filter(User.role == "student")
+    if classroom.department:
+        query = query.filter(func.lower(User.department) == _normalize_text_key(classroom.department))
+    if classroom.year is not None:
+        query = query.filter(User.year == classroom.year)
+    if classroom.section:
+        query = query.filter(func.upper(User.section) == classroom.section.strip().upper())
+    for row in query.all():
+        targeted_ids.add(row.id)
+
+    if selected_set:
+        selected_rows = User.query.filter(User.role == "student", func.lower(User.email).in_(selected_set)).all()
+        for row in selected_rows:
+            selected_ids.add(row.id)
+
+    final_ids = sorted(targeted_ids.union(selected_ids))
+    students = User.query.filter(User.role == "student", User.id.in_(final_ids)).all() if final_ids else []
+    return students, len(targeted_ids), len(selected_ids)
+
+
+def _resolve_outbound_mail_config(faculty):
+    if (
+        faculty
+        and faculty.faculty_mail_notifications_enabled
+        and faculty.faculty_mail_sender_email
+        and faculty.faculty_mail_app_password
+    ):
+        return {
+            "smtp_host": current_app.config.get("FACULTY_MAIL_SMTP_HOST", "smtp.gmail.com"),
+            "smtp_port": current_app.config.get("FACULTY_MAIL_SMTP_PORT", 587),
+            "smtp_user": faculty.faculty_mail_sender_email,
+            "smtp_pass": (faculty.faculty_mail_app_password or "").replace(" ", ""),
+            "from_email": faculty.faculty_mail_sender_email,
+            "use_tls": current_app.config.get("FACULTY_MAIL_USE_TLS", True),
+            "sender_type": "faculty",
+        }
+
+    smtp_user = current_app.config.get("MAIL_SMTP_USERNAME")
+    return {
+        "smtp_host": current_app.config.get("MAIL_SMTP_HOST"),
+        "smtp_port": current_app.config.get("MAIL_SMTP_PORT"),
+        "smtp_user": smtp_user,
+        "smtp_pass": (current_app.config.get("MAIL_SMTP_PASSWORD") or "").replace(" ", ""),
+        "from_email": current_app.config.get("MAIL_FROM_EMAIL") or smtp_user,
+        "use_tls": current_app.config.get("MAIL_USE_TLS", True),
+        "sender_type": "platform",
+    }
+
+
+def _send_classroom_invitation_email(student, faculty, classroom):
+    mail_cfg = _resolve_outbound_mail_config(faculty)
+    smtp_host = mail_cfg.get("smtp_host")
+    smtp_port = mail_cfg.get("smtp_port")
+    smtp_user = mail_cfg.get("smtp_user")
+    smtp_pass = mail_cfg.get("smtp_pass")
+    from_email = mail_cfg.get("from_email")
+    use_tls = mail_cfg.get("use_tls")
+
+    if not smtp_host or not smtp_port or not smtp_user or not smtp_pass or not from_email:
+        return False, mail_cfg.get("sender_type")
+
+    faculty_name = faculty.name if faculty else "Faculty"
+    class_scope = " / ".join(
+        [
+            classroom.department or "-",
+            str(classroom.year or "-"),
+            classroom.section or "-",
+        ]
+    )
+    semester_text = classroom.semester or "Current Semester"
+
+    msg = EmailMessage()
+    msg["Subject"] = f"Classroom Invite: {classroom.subject} - {classroom.title}"
+    msg["From"] = from_email
+    msg["To"] = student.email
+    if faculty and faculty.email:
+        msg["Reply-To"] = faculty.email
+    msg.set_content(
+        f"Hello {student.name},\n\n"
+        "A new classroom has been created for your class.\n\n"
+        f"Title: {classroom.title}\n"
+        f"Subject: {classroom.subject}\n"
+        f"Class: {class_scope}\n"
+        f"Semester: {semester_text}\n"
+        f"Teacher: {faculty_name}\n"
+        f"Join Link: {classroom.join_link}\n\n"
+        "Please use the join link to access the classroom in Smart Campus."
+    )
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+        if use_tls:
+            server.starttls()
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+    return True, mail_cfg.get("sender_type")
 
 
 def _is_valid_time_range(start_time, end_time):
@@ -1656,6 +2092,88 @@ def get_faculty_timetable_today():
     return jsonify({"day": day, "slots": [_serialize_timetable_slot(slot) for slot in slots]}), 200
 
 
+@preference_bp.route("/api/faculty/timetable/pulse", methods=["GET"])
+@jwt_required()
+def get_faculty_timetable_pulse():
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    now = datetime.now()
+    day = _normalize_day(request.args.get("day")) or now.strftime("%A")
+    semester = (request.args.get("semester") or "").strip()
+    current_minutes = now.hour * 60 + now.minute
+
+    query = TimetableSlot.query.filter(
+        TimetableSlot.faculty_id == user.id,
+        TimetableSlot.day == day,
+    )
+    if semester:
+        query = query.filter(TimetableSlot.semester == semester)
+    rows = query.order_by(TimetableSlot.start_time.asc()).all()
+
+    serialized = [_serialize_timetable_slot(slot) for slot in rows]
+    current_slot = None
+    next_slot = None
+
+    for row in serialized:
+        start_minutes = _time_to_minutes(row.get("start_time"))
+        end_minutes = _time_to_minutes(row.get("end_time"))
+        if start_minutes is None or end_minutes is None:
+            continue
+        if start_minutes <= current_minutes < end_minutes:
+            current_slot = row
+        elif start_minutes > current_minutes and next_slot is None:
+            next_slot = row
+
+    return jsonify({
+        "day": day,
+        "server_time": now.strftime("%H:%M:%S"),
+        "slots": serialized,
+        "current_slot": current_slot,
+        "next_slot": next_slot,
+    }), 200
+
+
+@preference_bp.route("/api/faculty/timetable/upcoming-queue", methods=["GET"])
+@jwt_required()
+def get_faculty_upcoming_queue():
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    semester = (request.args.get("semester") or "").strip()
+    limit = request.args.get("limit", default=8, type=int) or 8
+    limit = max(1, min(limit, 20))
+    now = datetime.now()
+
+    query = TimetableSlot.query
+    if semester:
+        query = query.filter(TimetableSlot.semester == semester)
+    rows = query.all()
+
+    upcoming = []
+    for slot in rows:
+        minutes_until = _minutes_until_slot(now, slot.day, slot.start_time)
+        if minutes_until is None:
+            continue
+        if minutes_until == 0:
+            continue
+        item = _serialize_timetable_slot(slot)
+        item["minutes_until"] = minutes_until
+        upcoming.append(item)
+
+    upcoming = sorted(upcoming, key=lambda item: (item["minutes_until"], item.get("room") or "", item.get("subject") or ""))
+    trimmed = upcoming[:limit]
+
+    return jsonify({
+        "generated_at": now.isoformat(),
+        "semester": semester,
+        "count": len(trimmed),
+        "items": trimmed,
+    }), 200
+
+
 @preference_bp.route("/api/faculty/timetable/institute", methods=["GET"])
 @jwt_required()
 def get_faculty_institute_timetable():
@@ -1777,6 +2295,23 @@ def update_faculty_profile():
     user.name = name
     user.department = department
     user.roll_number = roll_number
+
+    if "faculty_mail_sender_email" in data:
+        sender_email = _normalize_email(data.get("faculty_mail_sender_email"))
+        if sender_email and ("@" not in sender_email or "." not in sender_email.split("@")[-1]):
+            return jsonify({"message": "Enter a valid faculty mail sender email"}), 400
+        user.faculty_mail_sender_email = sender_email or None
+
+    if "faculty_mail_app_password" in data:
+        raw_pass = (data.get("faculty_mail_app_password") or "").strip()
+        user.faculty_mail_app_password = raw_pass or None
+
+    if "faculty_mail_notifications_enabled" in data:
+        try:
+            user.faculty_mail_notifications_enabled = _to_bool(data.get("faculty_mail_notifications_enabled"))
+        except ValueError:
+            return jsonify({"message": "faculty_mail_notifications_enabled must be a boolean"}), 400
+
     db.session.commit()
 
     return jsonify({"message": "Profile updated successfully", "profile": _serialize_faculty_profile(user)}), 200
@@ -2129,7 +2664,33 @@ def get_role_inbox_messages():
         )
 
     rows = query.order_by(AdminMessage.created_at.desc()).all()
-    return jsonify([_serialize_admin_message(row) for row in rows]), 200
+    payload = [_serialize_admin_message(row) for row in rows]
+
+    if user.role == "student":
+        classroom_rows = (
+            Classroom.query
+            .filter(Classroom.is_active == True)  # noqa: E712
+            .order_by(Classroom.created_at.desc())
+            .all()
+        )
+        user_email = (user.email or "").strip().lower()
+        for classroom in classroom_rows:
+            targeted = _is_classroom_targeted_to_student(classroom, user)
+            invited = _is_student_email_invited_for_classroom(classroom.id, user_email) if user_email else False
+            if not targeted and not invited:
+                continue
+            faculty = User.query.get(classroom.faculty_id)
+            invite_row = None
+            if user_email:
+                invite_row = ClassroomAccessEmail.query.filter(
+                    ClassroomAccessEmail.classroom_id == classroom.id,
+                    ClassroomAccessEmail.student_email == user_email,
+                ).first()
+            created_at = invite_row.created_at if invite_row and invite_row.created_at else classroom.created_at
+            payload.append(_serialize_classroom_invite_notification(classroom, faculty, created_at))
+        payload.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+
+    return jsonify(payload), 200
 
 
 @preference_bp.route("/api/faculty/directory", methods=["GET"])
@@ -2166,10 +2727,11 @@ def create_faculty_peer_message():
     if user.role != "faculty":
         return jsonify({"message": "Forbidden"}), 403
 
-    data = request.get_json() or {}
+    data = request.form if request.form else (request.get_json() or {})
     recipient_id = _parse_int(data.get("recipient_id"))
     subject = (data.get("subject") or "").strip()
     body = (data.get("body") or "").strip()
+    attachment = request.files.get("attachment")
 
     if not recipient_id:
         return jsonify({"message": "recipient_id is required"}), 400
@@ -2179,8 +2741,16 @@ def create_faculty_peer_message():
         return jsonify({"message": "subject is required"}), 400
     if len(subject) > 160:
         return jsonify({"message": "subject must be 160 characters or fewer"}), 400
-    if not body:
-        return jsonify({"message": "body is required"}), 400
+    attachment_path = None
+    attachment_name = None
+    attachment_mime = None
+    if attachment and attachment.filename:
+        try:
+            attachment_path, attachment_name, attachment_mime = _save_chat_attachment(attachment)
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+    if not body and not attachment_path:
+        return jsonify({"message": "body or attachment is required"}), 400
 
     recipient = User.query.get(recipient_id)
     if not recipient or recipient.role != "faculty":
@@ -2190,7 +2760,10 @@ def create_faculty_peer_message():
         sender_id=user.id,
         recipient_id=recipient.id,
         subject=subject,
-        body=body,
+        body=body or "[Attachment]",
+        attachment_path=attachment_path,
+        attachment_name=attachment_name,
+        attachment_mime=attachment_mime,
     )
     db.session.add(row)
     db.session.commit()
@@ -2208,11 +2781,153 @@ def get_faculty_peer_inbox():
 
     rows = (
         FacultyPeerMessage.query
-        .filter(FacultyPeerMessage.recipient_id == user.id)
+        .filter(
+            or_(
+                FacultyPeerMessage.recipient_id == user.id,
+                FacultyPeerMessage.sender_id == user.id,
+            )
+        )
         .order_by(FacultyPeerMessage.created_at.desc())
         .all()
     )
     return jsonify([_serialize_faculty_peer_message(row) for row in rows]), 200
+
+
+@preference_bp.route("/api/faculty/messages/groups", methods=["POST"])
+@jwt_required()
+def create_faculty_chat_group():
+    user = _get_current_user()
+    if not user:
+        return jsonify({"message": "Unauthorized"}), 401
+    if user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    member_ids = data.get("member_ids") or []
+    if not name:
+        return jsonify({"message": "name is required"}), 400
+    if len(name) > 160:
+        return jsonify({"message": "name must be 160 characters or fewer"}), 400
+    if not isinstance(member_ids, list):
+        return jsonify({"message": "member_ids must be an array"}), 400
+
+    normalized_ids = set()
+    for raw_id in member_ids:
+        member_id = _parse_int(raw_id)
+        if member_id:
+            normalized_ids.add(member_id)
+    normalized_ids.add(user.id)
+
+    faculty_members = User.query.filter(
+        User.id.in_(list(normalized_ids)),
+        User.role == "faculty",
+    ).all()
+    valid_member_ids = {row.id for row in faculty_members}
+    if user.id not in valid_member_ids:
+        return jsonify({"message": "Group creator must be a faculty member"}), 400
+    if len(valid_member_ids) < 2:
+        return jsonify({"message": "Select at least one additional teacher"}), 400
+
+    group = FacultyChatGroup(name=name, created_by=user.id)
+    db.session.add(group)
+    db.session.flush()
+
+    for faculty_id in valid_member_ids:
+        db.session.add(FacultyChatGroupMember(group_id=group.id, faculty_id=faculty_id))
+    db.session.commit()
+    return jsonify({"message": "Group created successfully.", "data": _serialize_faculty_group(group)}), 201
+
+
+@preference_bp.route("/api/faculty/messages/groups", methods=["GET"])
+@jwt_required()
+def get_faculty_chat_groups():
+    user = _get_current_user()
+    if not user:
+        return jsonify({"message": "Unauthorized"}), 401
+    if user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    memberships = (
+        FacultyChatGroupMember.query
+        .filter(FacultyChatGroupMember.faculty_id == user.id)
+        .all()
+    )
+    group_ids = [m.group_id for m in memberships]
+    if not group_ids:
+        return jsonify([]), 200
+    rows = (
+        FacultyChatGroup.query
+        .filter(FacultyChatGroup.id.in_(group_ids))
+        .order_by(FacultyChatGroup.updated_at.desc())
+        .all()
+    )
+    return jsonify([_serialize_faculty_group(row) for row in rows]), 200
+
+
+@preference_bp.route("/api/faculty/messages/groups/<int:group_id>/messages", methods=["GET"])
+@jwt_required()
+def get_faculty_chat_group_messages(group_id):
+    user = _get_current_user()
+    if not user:
+        return jsonify({"message": "Unauthorized"}), 401
+    if user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    member = FacultyChatGroupMember.query.filter_by(group_id=group_id, faculty_id=user.id).first()
+    if not member:
+        return jsonify({"message": "Forbidden"}), 403
+    rows = (
+        FacultyChatGroupMessage.query
+        .filter(FacultyChatGroupMessage.group_id == group_id)
+        .order_by(FacultyChatGroupMessage.created_at.asc())
+        .all()
+    )
+    return jsonify([_serialize_faculty_group_message(row) for row in rows]), 200
+
+
+@preference_bp.route("/api/faculty/messages/groups/<int:group_id>/messages", methods=["POST"])
+@jwt_required()
+def send_faculty_chat_group_message(group_id):
+    user = _get_current_user()
+    if not user:
+        return jsonify({"message": "Unauthorized"}), 401
+    if user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    member = FacultyChatGroupMember.query.filter_by(group_id=group_id, faculty_id=user.id).first()
+    if not member:
+        return jsonify({"message": "Forbidden"}), 403
+    group = FacultyChatGroup.query.get(group_id)
+    if not group:
+        return jsonify({"message": "Group not found"}), 404
+
+    data = request.form if request.form else (request.get_json() or {})
+    body = (data.get("body") or "").strip()
+    attachment = request.files.get("attachment")
+    attachment_path = None
+    attachment_name = None
+    attachment_mime = None
+    if attachment and attachment.filename:
+        try:
+            attachment_path, attachment_name, attachment_mime = _save_chat_attachment(attachment)
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+    if not body and not attachment_path:
+        return jsonify({"message": "body or attachment is required"}), 400
+
+    row = FacultyChatGroupMessage(
+        group_id=group_id,
+        sender_id=user.id,
+        body=body or "[Attachment]",
+        attachment_path=attachment_path,
+        attachment_name=attachment_name,
+        attachment_mime=attachment_mime,
+    )
+    db.session.add(row)
+    group.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"message": "Message sent.", "data": _serialize_faculty_group_message(row)}), 201
 
 
 @preference_bp.route("/api/messages/queries", methods=["POST"])
@@ -2612,12 +3327,15 @@ def create_faculty_classroom():
     data = request.form if request.form else (request.get_json() or {})
     title = (data.get("title") or "").strip()
     subject = (data.get("subject") or "").strip()
-    join_link = (data.get("join_link") or "").strip()
+    join_link = _normalize_join_link(data.get("join_link"))
+    drive_link = _normalize_optional_link(data.get("drive_link"))
+    meet_link = _normalize_optional_link(data.get("meet_link"))
     semester = (data.get("semester") or "").strip() or None
     department = (data.get("department") or user.department or "").strip() or None
     year = _parse_int(data.get("year"))
     section = (data.get("section") or "").strip() or None
-    description = (data.get("description") or "").strip() or None
+    description = _clean_classroom_description(data.get("description"))
+    selected_student_emails = _parse_selected_student_emails(data.get("selected_student_emails"))
 
     if not title:
         return jsonify({"message": "title is required"}), 400
@@ -2625,10 +3343,6 @@ def create_faculty_classroom():
         return jsonify({"message": "title must be 200 characters or fewer"}), 400
     if not subject:
         return jsonify({"message": "subject is required"}), 400
-    if not join_link:
-        join_link = "https://classroom.google.com"
-    elif not (join_link.startswith("http://") or join_link.startswith("https://")):
-        return jsonify({"message": "join_link must start with http:// or https://"}), 400
     if year is not None and (year < 1 or year > 8):
         return jsonify({"message": "year must be between 1 and 8"}), 400
 
@@ -2662,6 +3376,8 @@ def create_faculty_classroom():
         section=section,
         description=description,
         join_link=join_link,
+        drive_link=drive_link,
+        meet_link=meet_link,
         cover_image_path=cover_image_path,
         cover_image_name=cover_image_name,
         cover_image_mime=cover_image_mime,
@@ -2669,7 +3385,56 @@ def create_faculty_classroom():
     )
     db.session.add(row)
     db.session.commit()
-    return jsonify({"message": "Classroom created successfully.", "data": _serialize_classroom(row)}), 201
+
+    invited_email_count = 0
+    for email in selected_student_emails:
+        exists = ClassroomAccessEmail.query.filter(
+            ClassroomAccessEmail.classroom_id == row.id,
+            ClassroomAccessEmail.student_email == email,
+        ).first()
+        if exists:
+            continue
+        db.session.add(ClassroomAccessEmail(classroom_id=row.id, student_email=email))
+        invited_email_count += 1
+    if invited_email_count:
+        db.session.commit()
+
+    target_students, targeted_scope_count, selected_scope_count = _get_target_students_for_classroom(
+        row, selected_student_emails
+    )
+    email_sent_count = 0
+    faculty_sender_count = 0
+    platform_sender_count = 0
+    for student in target_students:
+        if not student.email:
+            continue
+        try:
+            email_sent, sender_type = _send_classroom_invitation_email(student, user, row)
+            if email_sent:
+                email_sent_count += 1
+                if sender_type == "faculty":
+                    faculty_sender_count += 1
+                else:
+                    platform_sender_count += 1
+        except Exception:
+            current_app.logger.exception(
+                "Failed to send classroom invite email",
+                extra={"student_id": student.id, "classroom_id": row.id},
+            )
+
+    return jsonify({
+        "message": "Classroom created successfully.",
+        "data": _serialize_classroom(row),
+        "notification_summary": {
+            "target_students_count": len(target_students),
+            "targeted_scope_count": targeted_scope_count,
+            "selected_scope_count": selected_scope_count,
+            "invited_emails_saved_count": invited_email_count,
+            "emails_sent_count": email_sent_count,
+            "emails_sent_by_faculty_identity_count": faculty_sender_count,
+            "emails_sent_by_platform_count": platform_sender_count,
+        },
+    }), 201
 
 
 @preference_bp.route("/api/faculty/classrooms", methods=["GET"])
@@ -2727,15 +3492,14 @@ def update_faculty_classroom(classroom_id):
         row.section = (data.get("section") or "").strip() or None
 
     if "description" in data:
-        row.description = (data.get("description") or "").strip() or None
+        row.description = _clean_classroom_description(data.get("description"))
 
     if "join_link" in data:
-        join_link = (data.get("join_link") or "").strip()
-        if not join_link:
-            join_link = "https://classroom.google.com"
-        elif not (join_link.startswith("http://") or join_link.startswith("https://")):
-            return jsonify({"message": "join_link must start with http:// or https://"}), 400
-        row.join_link = join_link
+        row.join_link = _normalize_join_link(data.get("join_link"))
+    if "drive_link" in data:
+        row.drive_link = _normalize_optional_link(data.get("drive_link"))
+    if "meet_link" in data:
+        row.meet_link = _normalize_optional_link(data.get("meet_link"))
 
     if "year" in data:
         year = _parse_int(data.get("year"))
@@ -2821,12 +3585,27 @@ def add_faculty_classroom_access_email(classroom_id):
     )
     db.session.add(row)
     db.session.commit()
+
+    email_sent = False
+    sender_type = None
+    try:
+        email_sent, sender_type = _send_classroom_invitation_email(student, user, classroom)
+    except Exception:
+        current_app.logger.exception(
+            "Failed to send classroom invite email after access invite",
+            extra={"student_id": student.id, "classroom_id": classroom.id},
+        )
+
     return jsonify({
-        "message": "Student access email added.",
+        "message": "Student access email added and invite notification processed.",
         "data": {
             "id": row.id,
             "student_email": row.student_email,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+        },
+        "delivery": {
+            "email_sent": bool(email_sent),
+            "sender_type": sender_type or "unavailable",
         },
     }), 201
 
@@ -3157,6 +3936,7 @@ def review_faculty_assignment_submission(submission_id):
         return jsonify({"message": "Forbidden"}), 403
 
     data = request.get_json() or {}
+    review_content_changed = False
     if "status" in data:
         status = (data.get("status") or "").strip().lower()
         if status not in {"submitted", "reviewed", "needs_revision"}:
@@ -3165,14 +3945,113 @@ def review_faculty_assignment_submission(submission_id):
     if "teacher_feedback" in data:
         feedback = str(data.get("teacher_feedback") or "").strip()
         submission.teacher_feedback = feedback or None
+        review_content_changed = True
     if "grade" in data:
         grade = str(data.get("grade") or "").strip()
         if len(grade) > 20:
             return jsonify({"message": "grade must be 20 characters or fewer"}), 400
         submission.grade = grade or None
+        review_content_changed = True
+    if "section_grades" in data:
+        try:
+            section_grades = _clean_section_grades(data.get("section_grades"))
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+        submission.section_grades = json.dumps(section_grades) if section_grades else None
+        review_content_changed = True
+    if "total_marks_awarded" in data:
+        raw = data.get("total_marks_awarded")
+        if raw in (None, ""):
+            submission.total_marks_awarded = None
+        else:
+            try:
+                total_awarded = float(raw)
+            except (TypeError, ValueError):
+                return jsonify({"message": "total_marks_awarded must be numeric"}), 400
+            if total_awarded < 0:
+                return jsonify({"message": "total_marks_awarded must be non-negative"}), 400
+            submission.total_marks_awarded = round(total_awarded, 2)
+        review_content_changed = True
+    if "total_marks_out_of" in data:
+        raw = data.get("total_marks_out_of")
+        if raw in (None, ""):
+            submission.total_marks_out_of = None
+        else:
+            try:
+                total_out_of = float(raw)
+            except (TypeError, ValueError):
+                return jsonify({"message": "total_marks_out_of must be numeric"}), 400
+            if total_out_of <= 0:
+                return jsonify({"message": "total_marks_out_of must be greater than 0"}), 400
+            submission.total_marks_out_of = round(total_out_of, 2)
+        review_content_changed = True
+
+    if (
+        submission.total_marks_awarded is not None
+        and submission.total_marks_out_of is not None
+        and submission.total_marks_awarded > submission.total_marks_out_of
+    ):
+        return jsonify({"message": "total_marks_awarded cannot exceed total_marks_out_of"}), 400
+
+    if review_content_changed:
+        submission.admin_review_status = "pending"
+        submission.admin_reviewed_by = None
+        submission.admin_reviewed_at = None
 
     db.session.commit()
     return jsonify({"message": "Submission review updated.", "data": _serialize_submission_for_faculty(submission)}), 200
+
+
+@preference_bp.route("/api/admin/assignments/submissions/reviews", methods=["GET"])
+@jwt_required()
+def get_admin_assignment_submission_reviews():
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    status_filter = (request.args.get("status") or "pending").strip().lower()
+    allowed_status = {"pending", "approved", "rejected", "all"}
+    if status_filter not in allowed_status:
+        return jsonify({"message": "status must be pending, approved, rejected, or all"}), 400
+
+    query = AssignmentSubmission.query
+    if status_filter != "all":
+        query = query.filter(AssignmentSubmission.admin_review_status == status_filter)
+
+    rows = query.order_by(AssignmentSubmission.updated_at.desc()).all()
+    payload = []
+    for row in rows:
+        item = _serialize_submission_for_faculty(row)
+        assignment = Assignment.query.get(row.assignment_id)
+        item["assignment"] = _serialize_assignment(assignment) if assignment else None
+        payload.append(item)
+    return jsonify(payload), 200
+
+
+@preference_bp.route("/api/admin/assignments/submissions/<int:submission_id>/review", methods=["PATCH"])
+@jwt_required()
+def review_admin_assignment_submission(submission_id):
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    submission = AssignmentSubmission.query.get(submission_id)
+    if not submission:
+        return jsonify({"message": "Submission not found"}), 404
+
+    data = request.get_json() or {}
+    status = (data.get("status") or "").strip().lower()
+    if status not in {"approved", "rejected"}:
+        return jsonify({"message": "status must be approved or rejected"}), 400
+
+    submission.admin_review_status = status
+    submission.admin_reviewed_by = user.id
+    submission.admin_reviewed_at = datetime.utcnow()
+    db.session.commit()
+    _log_admin_activity(user.id, "assignment_review", f"Marked submission #{submission.id} as {status}")
+    db.session.commit()
+
+    return jsonify({"message": f"Submission marked as {status}.", "data": _serialize_submission_for_faculty(submission)}), 200
 
 
 @preference_bp.route("/api/student/assignments", methods=["GET"])

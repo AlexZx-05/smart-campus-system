@@ -78,6 +78,9 @@ function AdminDashboard({ onLogout }) {
   const [conflicts, setConflicts] = useState([]);
   const [loadingConflicts, setLoadingConflicts] = useState(false);
   const [conflictForm, setConflictForm] = useState({ title: "", description: "" });
+  const [assignmentReviewRows, setAssignmentReviewRows] = useState([]);
+  const [loadingAssignmentReviewRows, setLoadingAssignmentReviewRows] = useState(false);
+  const [assignmentReviewFilter, setAssignmentReviewFilter] = useState("pending");
   const currentYear = new Date().getFullYear();
   const semesterOptions = Array.from({ length: 6 }, (_, i) => currentYear - 1 + i).flatMap((year) => [
     `Odd ${year}`,
@@ -91,6 +94,7 @@ function AdminDashboard({ onLogout }) {
     { key: "rooms", label: "Rooms Management" },
     { key: "users", label: "User Management" },
     { key: "messages", label: "Messages" },
+    { key: "grade-reviews", label: "Grade Reviews" },
     { key: "notifications", label: "Notifications" },
     { key: "conflicts", label: "Conflict Resolution" },
     { key: "calendar", label: "Calendar Control" },
@@ -103,6 +107,7 @@ function AdminDashboard({ onLogout }) {
     rooms: "Rooms Management",
     users: "User Management",
     messages: "Messages",
+    "grade-reviews": "Grade Reviews",
     notifications: "Notifications",
     conflicts: "Conflict Resolution",
     calendar: "Calendar Control",
@@ -205,9 +210,129 @@ function AdminDashboard({ onLogout }) {
     if (activePage === "users") {
       loadUsers();
     }
+    if (activePage === "grade-reviews") {
+      const pendingCount = assignmentReviewRows.filter((row) => row.admin_review_status === "pending").length;
+      return (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-800">Assignment Grade Reviews</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  Admin confirmation controls when grades become visible to students.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={assignmentReviewFilter}
+                  onChange={(e) => setAssignmentReviewFilter(e.target.value)}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="all">All</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={loadAssignmentReviews}
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              Pending confirmations: {pendingCount}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            {loadingAssignmentReviewRows ? (
+              <p className="text-sm text-slate-500">Loading grade reviews...</p>
+            ) : assignmentReviewRows.length === 0 ? (
+              <p className="text-sm text-slate-500">No assignment reviews found for this filter.</p>
+            ) : (
+              <div className="space-y-3">
+                {assignmentReviewRows.map((row) => (
+                  <div key={row.id} className="rounded-lg border border-slate-200 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-800">
+                        {row.assignment?.title || "Assignment"} | {row.student_name || "Student"}
+                      </p>
+                      <span className="rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                        {row.admin_review_status || "pending"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Subject: {row.assignment?.subject || "-"} | Faculty: {row.assignment?.created_by_name || "-"}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Submitted: {row.submitted_at ? new Date(row.submitted_at).toLocaleString() : "-"}
+                    </p>
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Grade</p>
+                        <p className="mt-1 text-slate-800">{row.grade || "-"}</p>
+                      </div>
+                      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Total Marks</p>
+                        <p className="mt-1 text-slate-800">
+                          {row.total_marks_awarded != null && row.total_marks_out_of != null
+                            ? `${row.total_marks_awarded} / ${row.total_marks_out_of}`
+                            : "-"}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Teacher Feedback</p>
+                        <p className="mt-1 text-slate-800 whitespace-pre-wrap">{row.teacher_feedback || "-"}</p>
+                      </div>
+                    </div>
+                    {Array.isArray(row.section_grades) && row.section_grades.length > 0 && (
+                      <div className="mt-2 rounded-md border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Section-wise Marks</p>
+                        <div className="mt-1 space-y-1">
+                          {row.section_grades.map((item, idx) => (
+                            <p key={`${row.id}-section-${idx}`} className="text-xs text-slate-700">
+                              {item.section}: {item.marks_awarded} / {item.marks_out_of}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {row.admin_review_status === "pending" && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleAssignmentReviewDecision(row.id, "approved")}
+                          className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                        >
+                          Approve Release
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAssignmentReviewDecision(row.id, "rejected")}
+                          className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     if (activePage === "messages") {
       loadAdminMessages();
       loadSupportQueries();
+    }
+    if (activePage === "grade-reviews") {
+      loadAssignmentReviews();
     }
     if (activePage === "conflicts") {
       loadConflicts();
@@ -259,6 +384,12 @@ function AdminDashboard({ onLogout }) {
       loadSupportQueries();
     }
   }, [queryStatusFilter, querySenderRoleFilter, queryPriorityFilter]);
+
+  useEffect(() => {
+    if (activePage === "grade-reviews") {
+      loadAssignmentReviews();
+    }
+  }, [assignmentReviewFilter]);
 
   const loadCalendarEvents = async () => {
     setLoadingCalendarEvents(true);
@@ -343,6 +474,28 @@ function AdminDashboard({ onLogout }) {
       setPreferencesError(err.response?.data?.message || "Failed to load conflicts.");
     } finally {
       setLoadingConflicts(false);
+    }
+  };
+
+  const loadAssignmentReviews = async () => {
+    setLoadingAssignmentReviewRows(true);
+    setPreferencesError("");
+    try {
+      const data = await PreferenceService.getAdminAssignmentSubmissionReviews(assignmentReviewFilter || "pending");
+      setAssignmentReviewRows(data || []);
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to load assignment grade reviews.");
+    } finally {
+      setLoadingAssignmentReviewRows(false);
+    }
+  };
+
+  const handleAssignmentReviewDecision = async (submissionId, status) => {
+    try {
+      await PreferenceService.reviewAdminAssignmentSubmission(submissionId, status);
+      await loadAssignmentReviews();
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to update assignment review status.");
     }
   };
 

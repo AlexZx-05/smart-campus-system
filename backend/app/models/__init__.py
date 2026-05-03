@@ -9,6 +9,9 @@ from .conflict_request import ConflictRequest
 from .admin_activity_log import AdminActivityLog
 from .support_query import SupportQuery
 from .faculty_peer_message import FacultyPeerMessage
+from .faculty_chat_group import FacultyChatGroup
+from .faculty_chat_group_member import FacultyChatGroupMember
+from .faculty_chat_group_message import FacultyChatGroupMessage
 from .assignment import Assignment
 from .assignment_submission import AssignmentSubmission
 from .assignment_reminder_log import AssignmentReminderLog

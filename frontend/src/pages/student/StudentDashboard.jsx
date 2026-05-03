@@ -18,6 +18,8 @@ import StudentService from "../../services/StudentService";
 import PreferenceService from "../../services/PreferenceService";
 import EventService from "../../services/EventService";
 
+const STUDENT_NOTIFICATIONS_LAST_SEEN_KEY = "student_notifications_last_seen_ms";
+
 const defaultStudentSettings = {
   emailNotifications: true,
   examAlerts: true,
@@ -63,6 +65,15 @@ function StudentDashboard({ onLogout }) {
   const [joinedClassrooms, setJoinedClassrooms] = useState([]);
   const [courseEnrollments, setCourseEnrollments] = useState([]);
   const [pendingJoinClassroomId, setPendingJoinClassroomId] = useState(null);
+  const [notificationsLastSeenMs, setNotificationsLastSeenMs] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STUDENT_NOTIFICATIONS_LAST_SEEN_KEY);
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch (_) {
+      return 0;
+    }
+  });
 
   const normalizeTextKey = (value) => (value || "").trim().toLowerCase();
   const normalizeDay = (value) => (value || "").trim().toLowerCase();
@@ -77,8 +88,13 @@ function StudentDashboard({ onLogout }) {
     setAnnouncementError("");
     try {
       const items = await PreferenceService.getInboxMessages();
-      setDashboardAnnouncements(items || []);
-      return items || [];
+      const announcementRows = (items || []).filter((row) => {
+        if (row?.kind === "classroom_invite") return false;
+        const role = String(row?.recipient_role || "").toLowerCase();
+        return role === "student" || role === "all";
+      });
+      setDashboardAnnouncements(announcementRows);
+      return announcementRows;
     } catch (err) {
       setAnnouncementError(err.response?.data?.message || "Failed to load announcements.");
       return [];
@@ -200,6 +216,14 @@ function StudentDashboard({ onLogout }) {
     }
   };
 
+  const markNotificationsAsSeen = () => {
+    const nowMs = Date.now();
+    setNotificationsLastSeenMs(nowMs);
+    try {
+      localStorage.setItem(STUDENT_NOTIFICATIONS_LAST_SEEN_KEY, String(nowMs));
+    } catch (_) {}
+  };
+
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -228,6 +252,17 @@ function StudentDashboard({ onLogout }) {
     loadDashboardAnnouncements();
     loadPersonalizedOverview();
   }, []);
+
+  useEffect(() => {
+    if (activePage === "notifications") {
+      markNotificationsAsSeen();
+    }
+  }, [activePage]);
+
+  const unreadNotificationCount = (dashboardAnnouncements || []).filter((item) => {
+    const createdMs = new Date(item?.created_at || 0).getTime();
+    return Number.isFinite(createdMs) && createdMs > notificationsLastSeenMs;
+  }).length;
 
   if (error) {
     return (
@@ -289,6 +324,7 @@ function StudentDashboard({ onLogout }) {
             joinedClassrooms={joinedClassrooms}
             courseEnrollments={courseEnrollments}
             settings={studentSettings}
+            unreadNotificationCount={unreadNotificationCount}
           />
         );
       case "timetable":
@@ -298,7 +334,14 @@ function StudentDashboard({ onLogout }) {
       case "rooms":
         return <Rooms />;
       case "notifications":
-        return <Notifications />;
+        return (
+          <Notifications
+            onJoinClassroomRequested={(classroomId) => {
+              setPendingJoinClassroomId(classroomId ? String(classroomId) : null);
+              setActivePage("assignments");
+            }}
+          />
+        );
       case "assignments":
         return (
           <Assignments
@@ -370,6 +413,7 @@ function StudentDashboard({ onLogout }) {
             joinedClassrooms={joinedClassrooms}
             courseEnrollments={courseEnrollments}
             settings={studentSettings}
+            unreadNotificationCount={unreadNotificationCount}
           />
         );
     }

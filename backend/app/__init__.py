@@ -54,6 +54,21 @@ def _ensure_user_auth_columns():
     if "otp_last_verified_at" not in column_names:
         db.session.execute(text("ALTER TABLE user ADD COLUMN otp_last_verified_at DATETIME"))
         db.session.commit()
+    if "faculty_mail_sender_email" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN faculty_mail_sender_email VARCHAR(120)"))
+        db.session.commit()
+    if "faculty_mail_app_password" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN faculty_mail_app_password VARCHAR(255)"))
+        db.session.commit()
+    if "faculty_mail_notifications_enabled" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN faculty_mail_notifications_enabled BOOLEAN DEFAULT 0"))
+        db.session.execute(
+            text(
+                "UPDATE user SET faculty_mail_notifications_enabled = 0 "
+                "WHERE faculty_mail_notifications_enabled IS NULL"
+            )
+        )
+        db.session.commit()
 
 
 def _ensure_faculty_preference_columns():
@@ -109,6 +124,94 @@ def _ensure_support_query_attachment_columns():
         db.session.commit()
 
 
+def _ensure_assignment_submission_review_columns():
+    table = db.session.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name='assignment_submission'")
+    ).fetchone()
+    if not table:
+        return
+
+    columns = db.session.execute(text("PRAGMA table_info(assignment_submission)")).fetchall()
+    column_names = [col[1] for col in columns]
+
+    if "admin_review_status" not in column_names:
+        db.session.execute(text("ALTER TABLE assignment_submission ADD COLUMN admin_review_status VARCHAR(20) DEFAULT 'pending'"))
+        db.session.execute(
+            text(
+                "UPDATE assignment_submission SET admin_review_status = 'pending' "
+                "WHERE admin_review_status IS NULL OR admin_review_status = ''"
+            )
+        )
+        db.session.commit()
+    if "admin_reviewed_by" not in column_names:
+        db.session.execute(text("ALTER TABLE assignment_submission ADD COLUMN admin_reviewed_by INTEGER"))
+        db.session.commit()
+    if "admin_reviewed_at" not in column_names:
+        db.session.execute(text("ALTER TABLE assignment_submission ADD COLUMN admin_reviewed_at DATETIME"))
+        db.session.commit()
+    if "section_grades" not in column_names:
+        db.session.execute(text("ALTER TABLE assignment_submission ADD COLUMN section_grades TEXT"))
+        db.session.commit()
+    if "total_marks_awarded" not in column_names:
+        db.session.execute(text("ALTER TABLE assignment_submission ADD COLUMN total_marks_awarded FLOAT"))
+        db.session.commit()
+    if "total_marks_out_of" not in column_names:
+        db.session.execute(text("ALTER TABLE assignment_submission ADD COLUMN total_marks_out_of FLOAT"))
+        db.session.commit()
+
+
+def _ensure_classroom_link_columns():
+    table = db.session.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name='classroom'")
+    ).fetchone()
+    if not table:
+        return
+
+    columns = db.session.execute(text("PRAGMA table_info(classroom)")).fetchall()
+    column_names = [col[1] for col in columns]
+
+    if "drive_link" not in column_names:
+        db.session.execute(text("ALTER TABLE classroom ADD COLUMN drive_link VARCHAR(500)"))
+        db.session.commit()
+    if "meet_link" not in column_names:
+        db.session.execute(text("ALTER TABLE classroom ADD COLUMN meet_link VARCHAR(500)"))
+        db.session.commit()
+
+
+def _ensure_faculty_message_attachment_columns():
+    peer_table = db.session.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name='faculty_peer_message'")
+    ).fetchone()
+    if peer_table:
+        columns = db.session.execute(text("PRAGMA table_info(faculty_peer_message)")).fetchall()
+        column_names = [col[1] for col in columns]
+        if "attachment_path" not in column_names:
+            db.session.execute(text("ALTER TABLE faculty_peer_message ADD COLUMN attachment_path VARCHAR(255)"))
+            db.session.commit()
+        if "attachment_name" not in column_names:
+            db.session.execute(text("ALTER TABLE faculty_peer_message ADD COLUMN attachment_name VARCHAR(255)"))
+            db.session.commit()
+        if "attachment_mime" not in column_names:
+            db.session.execute(text("ALTER TABLE faculty_peer_message ADD COLUMN attachment_mime VARCHAR(120)"))
+            db.session.commit()
+
+    group_table = db.session.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name='faculty_chat_group_message'")
+    ).fetchone()
+    if group_table:
+        columns = db.session.execute(text("PRAGMA table_info(faculty_chat_group_message)")).fetchall()
+        column_names = [col[1] for col in columns]
+        if "attachment_path" not in column_names:
+            db.session.execute(text("ALTER TABLE faculty_chat_group_message ADD COLUMN attachment_path VARCHAR(255)"))
+            db.session.commit()
+        if "attachment_name" not in column_names:
+            db.session.execute(text("ALTER TABLE faculty_chat_group_message ADD COLUMN attachment_name VARCHAR(255)"))
+            db.session.commit()
+        if "attachment_mime" not in column_names:
+            db.session.execute(text("ALTER TABLE faculty_chat_group_message ADD COLUMN attachment_mime VARCHAR(120)"))
+            db.session.commit()
+
+
 def _ensure_default_rooms():
     if Room.query.count() > 0:
         return
@@ -154,6 +257,9 @@ def create_app():
         _ensure_user_auth_columns()
         _ensure_faculty_preference_columns()
         _ensure_support_query_attachment_columns()
+        _ensure_assignment_submission_review_columns()
+        _ensure_classroom_link_columns()
+        _ensure_faculty_message_attachment_columns()
         _ensure_default_rooms()
 
     return app

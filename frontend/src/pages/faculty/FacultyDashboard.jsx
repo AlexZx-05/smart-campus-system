@@ -80,13 +80,19 @@ function FacultyDashboard({ onLogout }) {
   const [loadingMyPreferences, setLoadingMyPreferences] = useState(false);
   const [facultyTimetable, setFacultyTimetable] = useState([]);
   const [todaySchedule, setTodaySchedule] = useState([]);
+  const [teachingPulse, setTeachingPulse] = useState(null);
   const [instituteTimetable, setInstituteTimetable] = useState([]);
   const [loadingTimetable, setLoadingTimetable] = useState(false);
+  const [loadingTeachingPulse, setLoadingTeachingPulse] = useState(false);
   const [timetableError, setTimetableError] = useState("");
+  const [teachingPulseError, setTeachingPulseError] = useState("");
   const [facultyTimetableView, setFacultyTimetableView] = useState("my");
   const [roomLiveStatus, setRoomLiveStatus] = useState(null);
   const [loadingRoomLiveStatus, setLoadingRoomLiveStatus] = useState(false);
   const [roomLiveStatusError, setRoomLiveStatusError] = useState("");
+  const [upcomingQueue, setUpcomingQueue] = useState([]);
+  const [loadingUpcomingQueue, setLoadingUpcomingQueue] = useState(false);
+  const [upcomingQueueError, setUpcomingQueueError] = useState("");
   const [semesterFilter, setSemesterFilter] = useState("");
 
   const today = new Date();
@@ -124,9 +130,17 @@ function FacultyDashboard({ onLogout }) {
   const [showTeacherProfilePanel, setShowTeacherProfilePanel] = useState(false);
   const [showTeacherAvatarPreview, setShowTeacherAvatarPreview] = useState(false);
   const [showTeacherMenu, setShowTeacherMenu] = useState(false);
+  const [chatAttachment, setChatAttachment] = useState(null);
   const [facultyMessageFeedback, setFacultyMessageFeedback] = useState("");
   const [facultyMessageError, setFacultyMessageError] = useState("");
   const [facultyInbox, setFacultyInbox] = useState([]);
+  const [facultyChatGroups, setFacultyChatGroups] = useState([]);
+  const [loadingFacultyChatGroups, setLoadingFacultyChatGroups] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [selectedGroupMessages, setSelectedGroupMessages] = useState([]);
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [groupForm, setGroupForm] = useState({ name: "", member_ids: [] });
   const [teacherThreadLastSeenById, setTeacherThreadLastSeenById] = useState(() => {
     try {
       const raw = localStorage.getItem(TEACHER_THREAD_LAST_SEEN_KEY);
@@ -172,6 +186,8 @@ function FacultyDashboard({ onLogout }) {
     section: "",
     description: "",
     join_link: "",
+    drive_link: "",
+    meet_link: "",
     cover_image: null,
   });
   const [showCreateClassroomModal, setShowCreateClassroomModal] = useState(false);
@@ -195,6 +211,8 @@ function FacultyDashboard({ onLogout }) {
   const [newClassroomAccessEmail, setNewClassroomAccessEmail] = useState("");
   const [savingClassroomAccessEmail, setSavingClassroomAccessEmail] = useState(false);
   const [removingClassroomAccessEmailId, setRemovingClassroomAccessEmailId] = useState(null);
+  const [classroomInviteMessage, setClassroomInviteMessage] = useState("");
+  const [classroomInviteError, setClassroomInviteError] = useState("");
   const [selectedClassroomTab, setSelectedClassroomTab] = useState("stream");
   const [classroomAnnouncementDraft, setClassroomAnnouncementDraft] = useState("");
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
@@ -226,6 +244,8 @@ function FacultyDashboard({ onLogout }) {
     section: "",
     description: "",
     join_link: "",
+    drive_link: "",
+    meet_link: "",
   });
   const [facultyAssignments, setFacultyAssignments] = useState([]);
   const [loadingFacultyAssignments, setLoadingFacultyAssignments] = useState(false);
@@ -239,6 +259,8 @@ function FacultyDashboard({ onLogout }) {
   const [dashboardNow, setDashboardNow] = useState(() => new Date());
   const composeTeacherMessageRef = useRef(null);
   const teacherMenuRef = useRef(null);
+  const chatDocInputRef = useRef(null);
+  const chatMediaInputRef = useRef(null);
   const classroomTabContentRef = useRef(null);
   const classroomTabsRef = useRef(null);
   const classworkCreateMenuRef = useRef(null);
@@ -403,6 +425,67 @@ function FacultyDashboard({ onLogout }) {
     }
   };
 
+  const loadFacultyChatGroups = async () => {
+    setLoadingFacultyChatGroups(true);
+    setFacultyMessageError("");
+    try {
+      const data = await PreferenceService.getFacultyChatGroups();
+      setFacultyChatGroups(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setFacultyMessageError(err.response?.data?.message || "Failed to load faculty groups.");
+    } finally {
+      setLoadingFacultyChatGroups(false);
+    }
+  };
+
+  const loadSelectedGroupMessages = async (groupId) => {
+    if (!groupId) {
+      setSelectedGroupMessages([]);
+      return;
+    }
+    try {
+      const data = await PreferenceService.getFacultyChatGroupMessages(groupId);
+      setSelectedGroupMessages(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setFacultyMessageError(err.response?.data?.message || "Failed to load group messages.");
+      setSelectedGroupMessages([]);
+    }
+  };
+
+  const loadFacultyUpcomingQueue = async () => {
+    setLoadingUpcomingQueue(true);
+    setUpcomingQueueError("");
+    try {
+      const data = await PreferenceService.getFacultyUpcomingQueue({
+        semester: semesterFilter || undefined,
+        limit: 8,
+      });
+      setUpcomingQueue(data?.items || []);
+    } catch (err) {
+      setUpcomingQueue([]);
+      setUpcomingQueueError(err.response?.data?.message || "Failed to load upcoming classroom queue.");
+    } finally {
+      setLoadingUpcomingQueue(false);
+    }
+  };
+
+  const loadFacultyTeachingPulse = async () => {
+    setLoadingTeachingPulse(true);
+    setTeachingPulseError("");
+    try {
+      const data = await PreferenceService.getFacultyTeachingPulse(semesterFilter || undefined);
+      setTeachingPulse(data || null);
+      if (Array.isArray(data?.slots)) {
+        setTodaySchedule(data.slots);
+      }
+    } catch (err) {
+      setTeachingPulse(null);
+      setTeachingPulseError(err.response?.data?.message || "Failed to load teaching pulse.");
+    } finally {
+      setLoadingTeachingPulse(false);
+    }
+  };
+
   const persistTeacherThreadSeenState = (nextState) => {
     try {
       localStorage.setItem(TEACHER_THREAD_LAST_SEEN_KEY, JSON.stringify(nextState));
@@ -416,13 +499,9 @@ function FacultyDashboard({ onLogout }) {
     const teacher = teacherDirectory.find((item) => String(item.id) === idKey);
     if (!teacher) return;
 
-    const teacherEmail = (teacher.email || "").trim().toLowerCase();
-    const teacherName = (teacher.name || "").trim().toLowerCase();
     const latestMessageMs = (inboxList || [])
       .filter((msg) => {
-        const senderEmail = (msg.sender_email || "").trim().toLowerCase();
-        const senderName = (msg.sender_name || "").trim().toLowerCase();
-        return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
+        return Number(msg.sender_id) === Number(teacher.id);
       })
       .reduce((maxMs, msg) => {
         const ts = new Date(msg.created_at || 0).getTime();
@@ -440,7 +519,7 @@ function FacultyDashboard({ onLogout }) {
   };
 
   const refreshFacultyNotifications = async () => {
-    await Promise.all([loadInboxMessages(), loadFacultyPeerInbox()]);
+    await Promise.all([loadInboxMessages(), loadFacultyPeerInbox(), loadFacultyChatGroups()]);
   };
 
   const loadFacultyConflicts = async () => {
@@ -500,6 +579,16 @@ function FacultyDashboard({ onLogout }) {
           status: row.status || "submitted",
           teacher_feedback: row.teacher_feedback || "",
           grade: row.grade || "",
+          section_grades:
+            Array.isArray(row.section_grades) && row.section_grades.length > 0
+              ? row.section_grades.map((item) => ({
+                  section: item.section || "",
+                  marks_awarded: item.marks_awarded ?? "",
+                  marks_out_of: item.marks_out_of ?? "",
+                }))
+              : [{ section: "Section 1", marks_awarded: "", marks_out_of: "" }],
+          total_marks_awarded: row.total_marks_awarded ?? "",
+          total_marks_out_of: row.total_marks_out_of ?? "",
         };
       });
       setSubmissionReviewDrafts(drafts);
@@ -547,7 +636,9 @@ function FacultyDashboard({ onLogout }) {
     if (activePage === "dashboard") {
       loadInboxMessages();
       loadFacultyTimetable();
+      loadFacultyTeachingPulse();
       loadFacultyRoomLiveStatus();
+      loadFacultyUpcomingQueue();
     }
     if (activePage === "notifications") {
       loadInboxMessages();
@@ -556,6 +647,7 @@ function FacultyDashboard({ onLogout }) {
     if (activePage === "teachers") {
       loadTeacherDirectory();
       loadFacultyPeerInbox();
+      loadFacultyChatGroups();
     }
     if (activePage === "conflicts") {
       loadFacultyConflicts();
@@ -574,6 +666,16 @@ function FacultyDashboard({ onLogout }) {
       loadFacultyTimetable();
     }
   }, [semesterFilter]);
+
+  useEffect(() => {
+    if (activePage !== "dashboard") return undefined;
+    const timer = setInterval(() => {
+      loadFacultyTeachingPulse();
+      loadFacultyRoomLiveStatus();
+      loadFacultyUpcomingQueue();
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [activePage, semesterFilter]);
 
   useEffect(() => {
     if (activePage !== "profile") setShowFacultyPhotoPopover(false);
@@ -869,6 +971,8 @@ function FacultyDashboard({ onLogout }) {
   };
 
   const selectTeacherForMessage = (teacherId) => {
+    setSelectedGroupId(null);
+    setChatAttachment(null);
     setFacultyMessageForm((prev) => ({ ...prev, recipient_id: String(teacherId) }));
     try {
       localStorage.setItem(LAST_SELECTED_TEACHER_KEY, String(teacherId));
@@ -884,6 +988,15 @@ function FacultyDashboard({ onLogout }) {
     }, 120);
   };
 
+  const selectGroupForMessage = async (groupId) => {
+    setSelectedGroupId(Number(groupId));
+    setChatAttachment(null);
+    setFacultyMessageForm((prev) => ({ ...prev, recipient_id: "" }));
+    setFacultyMessageError("");
+    setFacultyMessageFeedback("");
+    await loadSelectedGroupMessages(Number(groupId));
+  };
+
   const handleFacultyMessageInput = (e) => {
     const { name, value } = e.target;
     setFacultyMessageForm((prev) => ({ ...prev, [name]: value }));
@@ -896,21 +1009,78 @@ function FacultyDashboard({ onLogout }) {
     setFacultyMessageError("");
     setFacultyMessageFeedback("");
     try {
-      const payload = {
-        recipient_id: Number(facultyMessageForm.recipient_id),
-        subject: (facultyMessageForm.subject || "").trim() || "Faculty Chat",
-        body: facultyMessageForm.body,
-      };
-      const res = await PreferenceService.sendFacultyPeerMessage(payload);
+      const formData = new FormData();
+      const body = facultyMessageForm.body || "";
+      formData.append("body", body);
+      if (chatAttachment) {
+        formData.append("attachment", chatAttachment);
+      }
+      if (selectedGroupId) {
+        const res = await PreferenceService.sendFacultyChatGroupMessage(selectedGroupId, formData);
+        setFacultyMessageFeedback(res.message || "Message sent to group.");
+        setFacultyMessageForm((prev) => ({
+          ...prev,
+          body: "",
+        }));
+        setChatAttachment(null);
+        await Promise.all([loadFacultyChatGroups(), loadSelectedGroupMessages(selectedGroupId)]);
+        return;
+      }
+      formData.append("recipient_id", String(Number(facultyMessageForm.recipient_id)));
+      formData.append("subject", (facultyMessageForm.subject || "").trim() || "Faculty Chat");
+      const res = await PreferenceService.sendFacultyPeerMessage(formData);
       setFacultyMessageFeedback(res.message || "Message sent to faculty.");
       setFacultyMessageForm((prev) => ({
         ...prev,
         subject: "",
         body: "",
       }));
+      setChatAttachment(null);
       await loadFacultyPeerInbox();
     } catch (err) {
       setFacultyMessageError(err.response?.data?.message || "Failed to send faculty message.");
+    }
+  };
+
+  const toggleGroupMember = (teacherId) => {
+    setGroupForm((prev) => {
+      const has = prev.member_ids.includes(teacherId);
+      return {
+        ...prev,
+        member_ids: has ? prev.member_ids.filter((id) => id !== teacherId) : [...prev.member_ids, teacherId],
+      };
+    });
+  };
+
+  const handleChatAttachmentPick = (e) => {
+    const file = e.target.files?.[0] || null;
+    setChatAttachment(file);
+    setShowTeacherMenu(false);
+    if (e.target) e.target.value = "";
+  };
+
+  const createFacultyGroup = async (e) => {
+    e.preventDefault();
+    setCreatingGroup(true);
+    setFacultyMessageError("");
+    setFacultyMessageFeedback("");
+    try {
+      const res = await PreferenceService.createFacultyChatGroup({
+        name: groupForm.name,
+        member_ids: groupForm.member_ids,
+      });
+      setFacultyMessageFeedback(res.message || "Group created successfully.");
+      setShowCreateGroupModal(false);
+      setGroupForm({ name: "", member_ids: [] });
+      await loadFacultyChatGroups();
+      if (res?.data?.id) {
+        await selectGroupForMessage(res.data.id);
+      }
+      setTeacherListFilter("groups");
+    } catch (err) {
+      setFacultyMessageError(err.response?.data?.message || "Failed to create group.");
+    } finally {
+      setCreatingGroup(false);
     }
   };
 
@@ -984,7 +1154,13 @@ function FacultyDashboard({ onLogout }) {
     setAssignmentMessage("");
     setAssignmentError("");
     try {
-      const safeJoinLink = (classroomForm.join_link || "").trim() || "https://classroom.google.com";
+      const normalizeJoinLink = (rawValue) => {
+        const raw = String(rawValue || "").trim();
+        if (!raw) return "https://classroom.google.com";
+        if (/^https?:\/\//i.test(raw)) return raw;
+        return `https://${raw}`;
+      };
+      const safeJoinLink = normalizeJoinLink(classroomForm.join_link);
       const formData = new FormData();
       formData.append("title", classroomForm.title);
       formData.append("subject", classroomForm.subject);
@@ -994,6 +1170,8 @@ function FacultyDashboard({ onLogout }) {
       formData.append("section", classroomForm.section || "");
       formData.append("description", classroomForm.description || "");
       formData.append("join_link", safeJoinLink);
+      formData.append("drive_link", classroomForm.drive_link || "");
+      formData.append("meet_link", classroomForm.meet_link || "");
       formData.append("theme", classroomTheme);
       if (classroomForm.cover_image) {
         formData.append("cover_image", classroomForm.cover_image);
@@ -1014,6 +1192,8 @@ function FacultyDashboard({ onLogout }) {
         section: "",
         description: "",
         join_link: "",
+        drive_link: "",
+        meet_link: "",
         cover_image: null,
       }));
       setClassroomTheme("sunset");
@@ -1090,6 +1270,15 @@ function FacultyDashboard({ onLogout }) {
         status: draft.status || "reviewed",
         teacher_feedback: draft.teacher_feedback || "",
         grade: draft.grade || "",
+        section_grades: (draft.section_grades || [])
+          .map((item) => ({
+            section: String(item.section || "").trim(),
+            marks_awarded: item.marks_awarded,
+            marks_out_of: item.marks_out_of,
+          }))
+          .filter((item) => item.section && item.marks_awarded !== "" && item.marks_out_of !== ""),
+        total_marks_awarded: draft.total_marks_awarded === "" ? null : draft.total_marks_awarded,
+        total_marks_out_of: draft.total_marks_out_of === "" ? null : draft.total_marks_out_of,
       });
       setAssignmentMessage(res.message || "Submission updated.");
       await loadAssignmentSubmissions(selectedAssignmentId);
@@ -1097,6 +1286,49 @@ function FacultyDashboard({ onLogout }) {
     } catch (err) {
       setAssignmentError(err.response?.data?.message || "Failed to review submission.");
     }
+  };
+
+  const addSectionGradeDraftRow = (submissionId) => {
+    setSubmissionReviewDrafts((prev) => {
+      const curr = prev[submissionId] || {};
+      const rows = Array.isArray(curr.section_grades) ? curr.section_grades : [];
+      return {
+        ...prev,
+        [submissionId]: {
+          ...curr,
+          section_grades: [...rows, { section: `Section ${rows.length + 1}`, marks_awarded: "", marks_out_of: "" }],
+        },
+      };
+    });
+  };
+
+  const updateSectionGradeDraftRow = (submissionId, rowIndex, key, value) => {
+    setSubmissionReviewDrafts((prev) => {
+      const curr = prev[submissionId] || {};
+      const rows = Array.isArray(curr.section_grades) ? curr.section_grades : [];
+      return {
+        ...prev,
+        [submissionId]: {
+          ...curr,
+          section_grades: rows.map((row, idx) => (idx === rowIndex ? { ...row, [key]: value } : row)),
+        },
+      };
+    });
+  };
+
+  const removeSectionGradeDraftRow = (submissionId, rowIndex) => {
+    setSubmissionReviewDrafts((prev) => {
+      const curr = prev[submissionId] || {};
+      const rows = Array.isArray(curr.section_grades) ? curr.section_grades : [];
+      const nextRows = rows.filter((_, idx) => idx !== rowIndex);
+      return {
+        ...prev,
+        [submissionId]: {
+          ...curr,
+          section_grades: nextRows.length > 0 ? nextRows : [{ section: "Section 1", marks_awarded: "", marks_out_of: "" }],
+        },
+      };
+    });
   };
 
   const formatPostedRealtime = (isoString) => {
@@ -1341,22 +1573,10 @@ function FacultyDashboard({ onLogout }) {
       kind: "announcement",
       roleTag: msg.recipient_role || "faculty",
     }));
-
-    const teacherMessageItems = (facultyInbox || []).map((msg) => ({
-      id: `teacher-${msg.id}`,
-      actorName: msg.sender_name || "Teacher",
-      actionText: "sent a teacher message",
-      bodyText: msg.body || msg.subject || "",
-      createdAt: msg.created_at,
-      subject: msg.subject || "",
-      kind: "teacher_message",
-      senderEmail: msg.sender_email || "",
-    }));
-
-    return [...announcementItems, ...teacherMessageItems].sort(
+    return [...announcementItems].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [inboxMessages, facultyInbox]);
+  }, [inboxMessages]);
 
   const handleSelectedClassroomField = (e) => {
     const { name, value } = e.target;
@@ -1376,6 +1596,8 @@ function FacultyDashboard({ onLogout }) {
       section: selectedClassroom.section || "",
       description: selectedClassroom.description || "",
       join_link: selectedClassroom.join_link || "",
+      drive_link: selectedClassroom.drive_link || "",
+      meet_link: selectedClassroom.meet_link || "",
     });
     setIsEditingSelectedClassroom(true);
   };
@@ -1400,6 +1622,8 @@ function FacultyDashboard({ onLogout }) {
         section: selectedClassroomForm.section || "",
         description: selectedClassroomForm.description || "",
         join_link: selectedClassroomForm.join_link || "",
+        drive_link: selectedClassroomForm.drive_link || "",
+        meet_link: selectedClassroomForm.meet_link || "",
       };
       const res = await PreferenceService.updateFacultyClassroom(selectedClassroom.id, payload);
       const updated = res?.data || null;
@@ -1460,12 +1684,12 @@ function FacultyDashboard({ onLogout }) {
     if (!selectedClassroom?.id) return;
     const email = (newClassroomAccessEmail || "").trim().toLowerCase();
     if (!email) {
-      setAssignmentError("Enter a student email.");
+      setClassroomInviteError("Enter a student email.");
       return;
     }
     setSavingClassroomAccessEmail(true);
-    setAssignmentMessage("");
-    setAssignmentError("");
+    setClassroomInviteMessage("");
+    setClassroomInviteError("");
     try {
       const res = await PreferenceService.addFacultyClassroomAccessEmail(selectedClassroom.id, email);
       const added = res?.data;
@@ -1479,9 +1703,9 @@ function FacultyDashboard({ onLogout }) {
         await loadClassroomAccessEmails(selectedClassroom.id);
       }
       setNewClassroomAccessEmail("");
-      setAssignmentMessage(res?.message || "Student access email added.");
+      setClassroomInviteMessage(res?.message || "Student access email added.");
     } catch (err) {
-      setAssignmentError(err.response?.data?.message || "Failed to add student access email.");
+      setClassroomInviteError(err.response?.data?.message || "Failed to add student access email.");
     } finally {
       setSavingClassroomAccessEmail(false);
     }
@@ -1490,14 +1714,14 @@ function FacultyDashboard({ onLogout }) {
   const removeStudentAccessEmail = async (accessEmailId) => {
     if (!selectedClassroom?.id || !accessEmailId) return;
     setRemovingClassroomAccessEmailId(accessEmailId);
-    setAssignmentMessage("");
-    setAssignmentError("");
+    setClassroomInviteMessage("");
+    setClassroomInviteError("");
     try {
       const res = await PreferenceService.removeFacultyClassroomAccessEmail(selectedClassroom.id, accessEmailId);
       setClassroomAccessEmails((prev) => prev.filter((row) => row.id !== accessEmailId));
-      setAssignmentMessage(res?.message || "Student access email removed.");
+      setClassroomInviteMessage(res?.message || "Student access email removed.");
     } catch (err) {
-      setAssignmentError(err.response?.data?.message || "Failed to remove student access email.");
+      setClassroomInviteError(err.response?.data?.message || "Failed to remove student access email.");
     } finally {
       setRemovingClassroomAccessEmailId(null);
     }
@@ -1625,16 +1849,24 @@ function FacultyDashboard({ onLogout }) {
       const now = dashboardNow;
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
       const sortedTodaySchedule = [...todaySchedule].sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
-      const activeMySlot = sortedTodaySchedule.find(
+      const fallbackActiveMySlot = sortedTodaySchedule.find(
         (slot) => toMinutes(slot.start_time) <= nowMinutes && nowMinutes < toMinutes(slot.end_time)
       );
-      const nextMySlot = sortedTodaySchedule.find((slot) => toMinutes(slot.start_time) > nowMinutes);
+      const fallbackNextMySlot = sortedTodaySchedule.find((slot) => toMinutes(slot.start_time) > nowMinutes);
+      const activeMySlot = teachingPulse?.current_slot || fallbackActiveMySlot || null;
+      const nextMySlot = teachingPulse?.next_slot || fallbackNextMySlot || null;
 
       const liveRooms = roomLiveStatus?.rooms || [];
       const runningRoomClasses = liveRooms.filter((room) => room.status === "running" && room.running_class);
-      const nextCampusClasses = liveRooms
-        .filter((room) => room.next_class)
-        .sort((a, b) => toMinutes(a.next_class.start_time) - toMinutes(b.next_class.start_time));
+      const formatEta = (minutes) => {
+        const mins = Number(minutes);
+        if (!Number.isFinite(mins) || mins < 0) return "";
+        if (mins < 60) return `${mins} min`;
+        const hours = Math.floor(mins / 60);
+        const rem = mins % 60;
+        if (rem === 0) return `${hours} hr`;
+        return `${hours} hr ${rem} min`;
+      };
 
       return (
         <div className="space-y-5">
@@ -1759,7 +1991,9 @@ function FacultyDashboard({ onLogout }) {
               <div className="mt-4 space-y-3">
                 <div className="rounded-xl border border-emerald-200 bg-white/90 p-3 shadow-sm">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Current Slot</p>
-                  {activeMySlot ? (
+                  {loadingTeachingPulse ? (
+                    <p className="mt-1 text-sm text-slate-700">Refreshing current slot...</p>
+                  ) : activeMySlot ? (
                     <>
                       <p className="mt-1 text-sm font-semibold text-slate-900">{activeMySlot.subject}</p>
                       <p className="text-xs text-slate-600">
@@ -1773,7 +2007,9 @@ function FacultyDashboard({ onLogout }) {
 
                 <div className="rounded-xl border border-blue-200 bg-white/90 p-3 shadow-sm">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">Next Slot</p>
-                  {nextMySlot ? (
+                  {loadingTeachingPulse ? (
+                    <p className="mt-1 text-sm text-slate-700">Refreshing next slot...</p>
+                  ) : nextMySlot ? (
                     <>
                       <p className="mt-1 text-sm font-semibold text-slate-900">{nextMySlot.subject}</p>
                       <p className="text-xs text-slate-600">
@@ -1784,6 +2020,9 @@ function FacultyDashboard({ onLogout }) {
                     <p className="mt-1 text-sm text-slate-700">No more classes scheduled today.</p>
                   )}
                 </div>
+                {teachingPulseError && (
+                  <p className="text-xs text-amber-700">{teachingPulseError}</p>
+                )}
 
                 <div className="space-y-2">
                   <button
@@ -1817,20 +2056,37 @@ function FacultyDashboard({ onLogout }) {
 
           <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-rose-50/45 to-orange-50/35 p-6 shadow-[0_18px_38px_-28px_rgba(190,24,93,0.28)]">
             <h4 className="text-lg font-semibold tracking-tight text-slate-900">Upcoming Classroom Queue</h4>
-            {loadingRoomLiveStatus ? (
+            {loadingUpcomingQueue ? (
               <p className="mt-4 text-sm text-slate-500">Loading upcoming classes...</p>
-            ) : nextCampusClasses.length === 0 ? (
-              <p className="mt-4 text-sm text-slate-500">No upcoming room slots available.</p>
+            ) : upcomingQueue.length === 0 ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white/85 p-4">
+                <p className="text-sm text-slate-600">No upcoming room slots available.</p>
+                {upcomingQueueError && <p className="mt-2 text-xs text-amber-700">{upcomingQueueError}</p>}
+              </div>
             ) : (
               <div className="mt-4 space-y-2">
-                {nextCampusClasses.slice(0, 6).map((roomItem) => (
-                  <div key={`${roomItem.room}-${roomItem.next_class.id || roomItem.next_class.start_time}`} className="rounded-xl border border-slate-200 bg-white/80 p-3">
-                    <p className="text-sm font-semibold text-slate-900">
-                      {roomItem.next_class.start_time} | Room {roomItem.room} | {roomItem.next_class.subject}
+                {upcomingQueue.slice(0, 6).map((slot) => (
+                  <div
+                    key={`${slot.id || slot.day}-${slot.start_time}-${slot.room}`}
+                    className="rounded-xl border border-orange-200 bg-white/90 p-3 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-900">
+                        {slot.day} | {slot.start_time} - {slot.end_time}
+                      </p>
+                      <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">
+                        In {formatEta(slot.minutes_until)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      Room {slot.room || "-"} | {slot.subject || "Class"}
                     </p>
-                    <p className="text-xs text-slate-600 mt-1">
-                      {roomItem.next_class.faculty_name || "Faculty"} | {roomItem.next_class.department || "-"} / {roomItem.next_class.year || "-"} / {roomItem.next_class.section || "-"}
+                    <p className="mt-1 text-xs text-slate-600">
+                      {slot.faculty_name || "Faculty"} | {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"}
                     </p>
+                    {slot.semester && (
+                      <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">{slot.semester}</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2826,6 +3082,26 @@ function FacultyDashboard({ onLogout }) {
                               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
                             />
                           </label>
+                          <label className="block sm:col-span-2">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Google Drive Link</span>
+                            <input
+                              name="drive_link"
+                              value={selectedClassroomForm.drive_link}
+                              onChange={handleSelectedClassroomField}
+                              placeholder="https://drive.google.com/..."
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                            />
+                          </label>
+                          <label className="block sm:col-span-2">
+                            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Google Meet Link</span>
+                            <input
+                              name="meet_link"
+                              value={selectedClassroomForm.meet_link}
+                              onChange={handleSelectedClassroomField}
+                              placeholder="https://meet.google.com/..."
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                            />
+                          </label>
                         </div>
                         <label className="block">
                           <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Description</span>
@@ -2859,9 +3135,12 @@ function FacultyDashboard({ onLogout }) {
                       </div>
                     ) : (
                       <>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          {selectedClassroom.description || "No class description added yet."}
-                        </p>
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Teacher Description</p>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                            {selectedClassroom.description || "No class description added yet."}
+                          </p>
+                        </div>
                         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                           <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                             <p className="text-xs uppercase tracking-wide text-slate-500">Section</p>
@@ -3641,24 +3920,36 @@ function FacultyDashboard({ onLogout }) {
                       </div>
 
                       {showPeopleInviteForm && (
-                        <form onSubmit={addStudentAccessEmail} className="mt-3 flex items-center gap-2">
-                          <input
-                            type="email"
-                            value={newClassroomAccessEmail}
-                            onChange={(e) => setNewClassroomAccessEmail(e.target.value)}
-                            placeholder="student@college.edu"
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-                          />
-                          <button
-                            type="submit"
-                            disabled={savingClassroomAccessEmail}
-                            className={`rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 ${
-                              savingClassroomAccessEmail ? "cursor-not-allowed opacity-60" : ""
-                            }`}
-                          >
-                            {savingClassroomAccessEmail ? "Inviting..." : "Invite"}
-                          </button>
-                        </form>
+                        <div className="mt-3 space-y-2">
+                          <form onSubmit={addStudentAccessEmail} className="flex items-center gap-2">
+                            <input
+                              type="email"
+                              value={newClassroomAccessEmail}
+                              onChange={(e) => setNewClassroomAccessEmail(e.target.value)}
+                              placeholder="student@college.edu"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                            />
+                            <button
+                              type="submit"
+                              disabled={savingClassroomAccessEmail}
+                              className={`rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 ${
+                                savingClassroomAccessEmail ? "cursor-not-allowed opacity-60" : ""
+                              }`}
+                            >
+                              {savingClassroomAccessEmail ? "Inviting..." : "Invite"}
+                            </button>
+                          </form>
+                          {classroomInviteMessage && (
+                            <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
+                              {classroomInviteMessage}
+                            </div>
+                          )}
+                          {classroomInviteError && (
+                            <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                              {classroomInviteError}
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       {loadingClassroomAccessEmails ? (
@@ -3755,7 +4046,31 @@ function FacultyDashboard({ onLogout }) {
 
                 {selectedClassroomTab === "grades" && (
                   <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
-                    <h4 className="text-base font-semibold text-slate-900">Grades</h4>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-base font-semibold text-slate-900">Grades</h4>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={selectedAssignmentId || ""}
+                          onChange={(e) => setSelectedAssignmentId(e.target.value ? Number(e.target.value) : null)}
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        >
+                          <option value="">Select assignment</option>
+                          {selectedClassroomAssignments.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.title}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => selectedAssignmentId && loadAssignmentSubmissions(selectedAssignmentId)}
+                          className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                         <p className="text-xs uppercase tracking-wide text-slate-500">Assignments</p>
@@ -3770,9 +4085,143 @@ function FacultyDashboard({ onLogout }) {
                         <p className="text-lg font-semibold text-slate-800">{selectedClassroomAnnouncements.length}</p>
                       </div>
                     </div>
-                    <p className="mt-4 text-sm text-slate-600">
-                      Gradebook analytics can be extended here with submission-level marks and averages.
-                    </p>
+
+                    {loadingAssignmentSubmissions ? (
+                      <p className="mt-4 text-sm text-slate-500">Loading submissions...</p>
+                    ) : !selectedAssignmentId ? (
+                      <p className="mt-4 text-sm text-slate-500">Select an assignment to start grading.</p>
+                    ) : assignmentSubmissions.length === 0 ? (
+                      <p className="mt-4 text-sm text-slate-500">No submissions yet for this assignment.</p>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {assignmentSubmissions.map((row) => {
+                          const draft = submissionReviewDrafts[row.id] || {
+                            status: row.status || "submitted",
+                            teacher_feedback: row.teacher_feedback || "",
+                            grade: row.grade || "",
+                            section_grades: row.section_grades || [{ section: "Section 1", marks_awarded: "", marks_out_of: "" }],
+                            total_marks_awarded: row.total_marks_awarded ?? "",
+                            total_marks_out_of: row.total_marks_out_of ?? "",
+                          };
+                          return (
+                            <div key={row.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-slate-800">{row.student_name || row.student_email || "Student"}</p>
+                                <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                                  Admin: {row.admin_review_status || "pending"}
+                                </span>
+                              </div>
+
+                              <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                <label className="block">
+                                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Final Grade</span>
+                                  <input
+                                    value={draft.grade || ""}
+                                    onChange={(e) => handleSubmissionReviewDraft(row.id, "grade", e.target.value)}
+                                    placeholder="A / B+ / Pass"
+                                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                  />
+                                </label>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <label className="block">
+                                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Total Scored</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={draft.total_marks_awarded}
+                                      onChange={(e) => handleSubmissionReviewDraft(row.id, "total_marks_awarded", e.target.value)}
+                                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                    />
+                                  </label>
+                                  <label className="block">
+                                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Total Out Of</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={draft.total_marks_out_of}
+                                      onChange={(e) => handleSubmissionReviewDraft(row.id, "total_marks_out_of", e.target.value)}
+                                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                    />
+                                  </label>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                                <div className="mb-2 flex items-center justify-between">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Section-wise Marks</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => addSectionGradeDraftRow(row.id)}
+                                    className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                                  >
+                                    + Add Section
+                                  </button>
+                                </div>
+                                <div className="space-y-2">
+                                  {(draft.section_grades || []).map((item, idx) => (
+                                    <div key={`${row.id}-section-${idx}`} className="grid grid-cols-12 gap-2">
+                                      <input
+                                        value={item.section || ""}
+                                        onChange={(e) => updateSectionGradeDraftRow(row.id, idx, "section", e.target.value)}
+                                        placeholder="Section name"
+                                        className="col-span-6 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                                      />
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={item.marks_awarded ?? ""}
+                                        onChange={(e) => updateSectionGradeDraftRow(row.id, idx, "marks_awarded", e.target.value)}
+                                        placeholder="Scored"
+                                        className="col-span-2 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                                      />
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={item.marks_out_of ?? ""}
+                                        onChange={(e) => updateSectionGradeDraftRow(row.id, idx, "marks_out_of", e.target.value)}
+                                        placeholder="Out of"
+                                        className="col-span-2 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => removeSectionGradeDraftRow(row.id, idx)}
+                                        className="col-span-2 rounded-lg border border-red-200 px-2 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <label className="mt-3 block">
+                                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Teacher Feedback</span>
+                                <textarea
+                                  rows={3}
+                                  value={draft.teacher_feedback || ""}
+                                  onChange={(e) => handleSubmissionReviewDraft(row.id, "teacher_feedback", e.target.value)}
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                />
+                              </label>
+
+                              <div className="mt-3 flex items-center justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => saveSubmissionReview(row.id)}
+                                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                                >
+                                  Save And Send To Admin
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -3957,6 +4406,26 @@ function FacultyDashboard({ onLogout }) {
                           Add Google Meet / Zoom / Microsoft Teams classroom link. If left blank, default classroom link is used.
                         </span>
                       </label>
+                      <label className="block md:col-span-2">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Google Drive Link</span>
+                        <input
+                          name="drive_link"
+                          value={classroomForm.drive_link}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., https://drive.google.com/drive/folders/..."
+                        />
+                      </label>
+                      <label className="block md:col-span-2">
+                        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600">Google Meet Link</span>
+                        <input
+                          name="meet_link"
+                          value={classroomForm.meet_link}
+                          onChange={handleClassroomInput}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                          placeholder="e.g., https://meet.google.com/abc-defg-hij"
+                        />
+                      </label>
                     </div>
                   </div>
 
@@ -4054,23 +4523,23 @@ function FacultyDashboard({ onLogout }) {
       const selectedTeacher = teacherDirectory.find(
         (teacher) => String(teacher.id) === String(facultyMessageForm.recipient_id)
       );
-      const selectedTeacherName = selectedTeacher?.name || "No Active Conversation";
-      const selectedTeacherInitial = (selectedTeacher?.name || "T").charAt(0).toUpperCase();
-      const selectedTeacherMeta = selectedTeacher
+      const selectedGroup = facultyChatGroups.find((group) => Number(group.id) === Number(selectedGroupId));
+      const selectedTeacherName = selectedGroup?.name || selectedTeacher?.name || "No Active Conversation";
+      const selectedTeacherInitial = (selectedGroup?.name || selectedTeacher?.name || "T").charAt(0).toUpperCase();
+      const selectedTeacherMeta = selectedGroup
+        ? `${selectedGroup.members?.length || 0} members`
+        : selectedTeacher
         ? `${selectedTeacher.department || "Faculty"}${selectedTeacher.email ? ` | ${selectedTeacher.email}` : ""}`
         : "Select a teacher to begin conversation";
       const teacherChatMetaById = (teacherDirectory || []).reduce((acc, teacher) => {
-        const teacherEmail = (teacher.email || "").trim().toLowerCase();
-        const teacherName = (teacher.name || "").trim().toLowerCase();
         const matchedMessages = (facultyInbox || [])
           .filter((msg) => {
-            const senderEmail = (msg.sender_email || "").trim().toLowerCase();
-            const senderName = (msg.sender_name || "").trim().toLowerCase();
-            return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
+            return Number(msg.sender_id) === Number(teacher.id) || Number(msg.recipient_id) === Number(teacher.id);
           });
         const recent = matchedMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
         const seenMs = Number(teacherThreadLastSeenById?.[String(teacher.id)] || 0);
         const unreadCount = matchedMessages.filter((msg) => {
+          if (Number(msg.sender_id) !== Number(teacher.id)) return false;
           const ts = new Date(msg.created_at || 0).getTime();
           return Number.isFinite(ts) && ts > seenMs;
         }).length;
@@ -4094,17 +4563,23 @@ function FacultyDashboard({ onLogout }) {
         if (teacherListFilter === "groups") return false;
         return true;
       });
+      const sortedGroups = [...(facultyChatGroups || [])].sort((a, b) => {
+        const aTs = new Date(a.latest_message?.created_at || a.updated_at || 0).getTime();
+        const bTs = new Date(b.latest_message?.created_at || b.updated_at || 0).getTime();
+        return bTs - aTs;
+      });
       const selectedTeacherConversation = selectedTeacher
         ? (facultyInbox || [])
             .filter((msg) => {
-              const senderEmail = (msg.sender_email || "").trim().toLowerCase();
-              const senderName = (msg.sender_name || "").trim().toLowerCase();
-              const teacherEmail = (selectedTeacher.email || "").trim().toLowerCase();
-              const teacherName = (selectedTeacher.name || "").trim().toLowerCase();
-              return (teacherEmail && senderEmail === teacherEmail) || (teacherName && senderName === teacherName);
+              return (
+                Number(msg.sender_id) === Number(selectedTeacher.id) ||
+                Number(msg.recipient_id) === Number(selectedTeacher.id)
+              );
             })
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         : [];
+      const selectedConversation = selectedGroup ? selectedGroupMessages : selectedTeacherConversation;
+      const hasComposePayload = Boolean((facultyMessageForm.body || "").trim() || chatAttachment);
       const sharedFiles = selectedTeacherConversation
         .flatMap((msg) => {
           const body = String(msg.body || "");
@@ -4230,6 +4705,51 @@ function FacultyDashboard({ onLogout }) {
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
                 {teacherDirectoryError ? (
                   <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{teacherDirectoryError}</div>
+                ) : teacherListFilter === "groups" ? (
+                  loadingFacultyChatGroups ? (
+                    <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading groups...</p>
+                  ) : sortedGroups.length === 0 ? (
+                    <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                      No group conversations available.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {sortedGroups.map((group) => {
+                        const isSelected = Number(selectedGroupId) === Number(group.id);
+                        const preview = group.latest_message;
+                        const previewTime = preview?.created_at
+                          ? new Date(preview.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          : "";
+                        return (
+                          <button
+                            key={`group-${group.id}`}
+                            type="button"
+                            onClick={() => selectGroupForMessage(group.id)}
+                            className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                              isSelected
+                                ? "border-blue-300 bg-blue-50 shadow-[inset_3px_0_0_0_#2563eb]"
+                                : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-700">
+                                {String(group.name || "G").charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="truncate text-[15px] font-semibold text-slate-900">{group.name}</p>
+                                  <p className="text-[11px] text-slate-400">{previewTime}</p>
+                                </div>
+                                <p className="mt-0.5 truncate text-xs text-slate-500">
+                                  {preview?.body || `${group.members?.length || 0} members`}
+                                </p>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )
                 ) : loadingTeacherDirectory ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading teachers...</p>
                 ) : filteredTeacherDirectory.length === 0 ? (
@@ -4333,7 +4853,7 @@ function FacultyDashboard({ onLogout }) {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={loadFacultyPeerInbox}
+                    onClick={() => Promise.all([loadFacultyPeerInbox(), loadFacultyChatGroups()])}
                     aria-label="Refresh messages"
                     className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                   >
@@ -4385,23 +4905,30 @@ function FacultyDashboard({ onLogout }) {
                       </div>
                     )}
                   </div>
-                  <button type="button" className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500">+</button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateGroupModal(true)}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200"
+                    title="Create group"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto bg-[#eceff5] px-7 py-6">
-                {loadingFacultyInbox ? (
+                {loadingFacultyInbox || (selectedGroupId && loadingFacultyChatGroups) ? (
                   <p className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">Loading teacher messages...</p>
-                ) : !selectedTeacher ? (
+                ) : !selectedTeacher && !selectedGroup ? (
                   <div className="flex h-full items-start justify-center pt-12">
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-7 text-center text-sm text-slate-600">
-                      Select a teacher from the left list to open the chat.
+                      Select a teacher or group from the left list to open the chat.
                     </div>
                   </div>
-                ) : selectedTeacherConversation.length === 0 ? (
+                ) : selectedConversation.length === 0 ? (
                   <div className="mx-auto w-full max-w-4xl space-y-4 pt-10">
                     <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
-                      <p className="text-base font-semibold text-slate-900">No messages from {selectedTeacher.name} yet.</p>
+                      <p className="text-base font-semibold text-slate-900">No messages in {selectedTeacherName} yet.</p>
                       <p className="mt-1 text-sm text-slate-500">Start with one of these professional conversation openers.</p>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -4457,22 +4984,68 @@ function FacultyDashboard({ onLogout }) {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {selectedTeacherConversation.map((msg, idx) => (
+                    {selectedConversation.map((msg, idx) => (
                       <article key={msg.id} className="space-y-2">
                         <p className="px-2 text-xs text-slate-400">
                           {idx === 0 ? new Date(msg.created_at).toLocaleString() : ""}
                         </p>
-                        <div className="flex items-start gap-2.5">
-                        {selectedTeacher.profile_image_url ? (
-                          <img src={selectedTeacher.profile_image_url} alt={selectedTeacher.name} className="h-8 w-8 rounded-full object-cover" />
-                        ) : (
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                            {selectedTeacherInitial}
-                          </div>
+                        <div className={`flex items-start gap-2.5 ${Number(msg.sender_id) === Number(currentUserId) ? "justify-end" : ""}`}>
+                        {Number(msg.sender_id) !== Number(currentUserId) && (
+                          selectedTeacher?.profile_image_url ? (
+                            <img src={selectedTeacher.profile_image_url} alt={selectedTeacher.name} className="h-8 w-8 rounded-full object-cover" />
+                          ) : (
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+                              {(msg.sender_name || selectedTeacherInitial || "F").charAt(0).toUpperCase()}
+                            </div>
+                          )
                         )}
-                        <div className="max-w-[78%] rounded-2xl rounded-tl-md bg-white px-4 py-3 shadow-sm">
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{msg.body}</p>
-                          <p className="mt-1 text-[11px] text-slate-400">{new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                        <div
+                          className={`max-w-[78%] rounded-2xl px-4 py-3 shadow-sm ${
+                            Number(msg.sender_id) === Number(currentUserId)
+                              ? "rounded-tr-md bg-violet-600 text-white"
+                              : "rounded-tl-md bg-white"
+                          }`}
+                        >
+                          <p
+                            className={`whitespace-pre-wrap text-sm leading-relaxed ${
+                              Number(msg.sender_id) === Number(currentUserId) ? "text-white" : "text-slate-700"
+                            }`}
+                          >
+                            {msg.body}
+                          </p>
+                          {msg.attachment_url && (
+                            <div className="mt-2">
+                              {(msg.attachment_mime || "").startsWith("image/") ? (
+                                <a href={msg.attachment_url} target="_blank" rel="noreferrer">
+                                  <img src={msg.attachment_url} alt={msg.attachment_name || "attachment"} className="max-h-52 rounded-lg border border-slate-200 object-cover" />
+                                </a>
+                              ) : (msg.attachment_mime || "").startsWith("video/") ? (
+                                <video controls className="max-h-56 rounded-lg border border-slate-200 bg-black">
+                                  <source src={msg.attachment_url} type={msg.attachment_mime || "video/mp4"} />
+                                </video>
+                              ) : (
+                                <a
+                                  href={msg.attachment_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={`inline-flex items-center rounded-lg border px-2.5 py-1.5 text-xs font-medium ${
+                                    Number(msg.sender_id) === Number(currentUserId)
+                                      ? "border-violet-200 bg-violet-500 text-white"
+                                      : "border-slate-300 bg-slate-100 text-slate-800"
+                                  }`}
+                                >
+                                  {msg.attachment_name || "Open attachment"}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                          <p
+                            className={`mt-1 text-[11px] ${
+                              Number(msg.sender_id) === Number(currentUserId) ? "text-violet-100" : "text-slate-400"
+                            }`}
+                          >
+                            {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </p>
                         </div>
                         </div>
                       </article>
@@ -4482,9 +5055,35 @@ function FacultyDashboard({ onLogout }) {
               </div>
 
               <div ref={composeTeacherMessageRef} className="border-t border-slate-200 bg-white px-4 py-4">
+                <input
+                  ref={chatDocInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip,.rar,application/*,text/*"
+                  className="hidden"
+                  onChange={handleChatAttachmentPick}
+                />
+                <input
+                  ref={chatMediaInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  className="hidden"
+                  onChange={handleChatAttachmentPick}
+                />
+                {chatAttachment && (
+                  <div className="mb-2 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                    <span className="truncate pr-2">{chatAttachment.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setChatAttachment(null)}
+                      className="rounded border border-red-200 px-2 py-0.5 text-red-700 hover:bg-red-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
                 <form
                   onSubmit={(e) => {
-                    if (!selectedTeacher) return;
+                    if (!selectedTeacher && !selectedGroup) return;
                     sendFacultyMessage(e);
                   }}
                   className="flex items-end gap-2"
@@ -4494,10 +5093,9 @@ function FacultyDashboard({ onLogout }) {
                     rows={1}
                     value={facultyMessageForm.body}
                     onChange={handleFacultyMessageInput}
-                    placeholder={selectedTeacher ? "Type your message" : "Select a teacher first"}
+                    placeholder={selectedTeacher || selectedGroup ? "Type your message" : "Select a teacher or group first"}
                     className="max-h-24 min-h-[46px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-base outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-100"
-                    required
-                    disabled={!selectedTeacher}
+                    disabled={!selectedTeacher && !selectedGroup}
                   />
                   <button
                     type="button"
@@ -4510,10 +5108,10 @@ function FacultyDashboard({ onLogout }) {
                   </button>
                   <button
                     type="submit"
-                    disabled={!selectedTeacher}
+                    disabled={(!selectedTeacher && !selectedGroup) || !hasComposePayload}
                     aria-label="Send message"
                     className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
-                      selectedTeacher
+                      (selectedTeacher || selectedGroup) && hasComposePayload
                         ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700"
                         : "cursor-not-allowed bg-slate-200 text-slate-500"
                     }`}
@@ -4542,11 +5140,7 @@ function FacultyDashboard({ onLogout }) {
                         <button
                           type="button"
                           onClick={() => {
-                            setFacultyMessageForm((prev) => ({
-                              ...prev,
-                              body: "[Document] Please review the attached file.",
-                            }));
-                            setShowTeacherMenu(false);
+                            chatDocInputRef.current?.click();
                           }}
                           className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-violet-50 hover:text-violet-800"
                         >
@@ -4558,11 +5152,7 @@ function FacultyDashboard({ onLogout }) {
                         <button
                           type="button"
                           onClick={() => {
-                            setFacultyMessageForm((prev) => ({
-                              ...prev,
-                              body: "[Photos & videos] Sharing media from class activities.",
-                            }));
-                            setShowTeacherMenu(false);
+                            chatMediaInputRef.current?.click();
                           }}
                           className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-violet-50 hover:text-violet-800"
                         >
@@ -4755,6 +5345,87 @@ function FacultyDashboard({ onLogout }) {
               </div>
             </div>
           )}
+
+          {showCreateGroupModal && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-[2px]"
+              onClick={() => {
+                if (creatingGroup) return;
+                setShowCreateGroupModal(false);
+              }}
+            >
+              <div
+                className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xl font-semibold text-slate-900">Create Faculty Group</p>
+                    <p className="mt-1 text-sm text-slate-500">Add teachers to start a professional group discussion thread.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => !creatingGroup && setShowCreateGroupModal(false)}
+                    className="rounded-full bg-slate-100 px-2.5 py-1.5 text-sm text-slate-600 hover:bg-slate-200"
+                  >
+                    X
+                  </button>
+                </div>
+                <form onSubmit={createFacultyGroup} className="mt-4 space-y-4">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">Group Name</span>
+                    <input
+                      value={groupForm.name}
+                      onChange={(e) => setGroupForm((prev) => ({ ...prev, name: e.target.value }))}
+                      placeholder="e.g., Semester Planning Core Team"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                      required
+                    />
+                  </label>
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Select Members</p>
+                    <div className="max-h-60 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      {(teacherDirectory || []).map((teacher) => (
+                        <label key={`group-member-${teacher.id}`} className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={groupForm.member_ids.includes(teacher.id)}
+                            onChange={() => toggleGroupMember(teacher.id)}
+                            className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                          />
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-800">{teacher.name}</p>
+                            <p className="truncate text-xs text-slate-500">{teacher.email || teacher.department || "Faculty"}</p>
+                          </div>
+                        </label>
+                      ))}
+                      {teacherDirectory.length === 0 && (
+                        <p className="text-sm text-slate-500">No teachers available to add.</p>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">You will be added automatically as group creator.</p>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateGroupModal(false)}
+                      disabled={creatingGroup}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={creatingGroup}
+                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {creatingGroup ? "Creating..." : "Create Group"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -4768,11 +5439,9 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "notifications") {
-      const adminNotificationCount = facultyNotificationFeedItems.filter((item) => item.kind !== "teacher_message").length;
-      const teacherNotificationCount = facultyNotificationFeedItems.filter((item) => item.kind === "teacher_message").length;
+      const adminNotificationCount = facultyNotificationFeedItems.length;
       const filteredNotificationItems = facultyNotificationFeedItems.filter((item) => {
-        if (notificationTypeFilter === "teacher") return item.kind === "teacher_message";
-        if (notificationTypeFilter === "admin") return item.kind !== "teacher_message";
+        if (notificationTypeFilter === "admin") return item.kind === "announcement";
         return true;
       });
 
@@ -4820,17 +5489,6 @@ function FacultyDashboard({ onLogout }) {
                   >
                     Admin ({adminNotificationCount})
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setNotificationTypeFilter("teacher")}
-                    className={`ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                      notificationTypeFilter === "teacher"
-                        ? "bg-violet-600 text-white shadow-sm"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"
-                    }`}
-                  >
-                    Teacher ({teacherNotificationCount})
-                  </button>
                 </div>
                 <button
                   type="button"
@@ -4859,8 +5517,6 @@ function FacultyDashboard({ onLogout }) {
               <div className="px-5 py-8 text-sm text-slate-500">
                 {notificationTypeFilter === "admin"
                   ? "No admin announcements found."
-                  : notificationTypeFilter === "teacher"
-                  ? "No teacher messages found."
                   : "No notifications yet."}
               </div>
             ) : (
@@ -4886,12 +5542,10 @@ function FacultyDashboard({ onLogout }) {
                         <div className="flex shrink-0 items-center gap-2">
                           <span
                             className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
-                              item.kind === "teacher_message"
-                                ? "border-violet-200 bg-violet-50 text-violet-700"
-                                : "border-blue-200 bg-blue-50 text-blue-700"
+                              "border-blue-200 bg-blue-50 text-blue-700"
                             }`}
                           >
-                            {item.kind === "teacher_message" ? "Teacher Message" : "Admin Announcement"}
+                            Admin Announcement
                           </span>
                           <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
                             {notificationTimeAgo(item.createdAt)}

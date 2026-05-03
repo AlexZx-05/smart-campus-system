@@ -13,6 +13,8 @@ class Classroom(db.Model):
     section = db.Column(db.String(10), nullable=True, index=True)
     description = db.Column(db.Text, nullable=True)
     join_link = db.Column(db.String(500), nullable=False)
+    drive_link = db.Column(db.String(500), nullable=True)
+    meet_link = db.Column(db.String(500), nullable=True)
     cover_image_path = db.Column(db.String(255), nullable=True)
     cover_image_name = db.Column(db.String(255), nullable=True)
     cover_image_mime = db.Column(db.String(120), nullable=True)

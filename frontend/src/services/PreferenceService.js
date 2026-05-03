@@ -145,6 +145,26 @@ const PreferenceService = {
     return response.data;
   },
 
+  createFacultyChatGroup: async (payload) => {
+    const response = await API.post("/faculty/messages/groups", payload);
+    return response.data;
+  },
+
+  getFacultyChatGroups: async () => {
+    const response = await API.get("/faculty/messages/groups");
+    return response.data;
+  },
+
+  getFacultyChatGroupMessages: async (groupId) => {
+    const response = await API.get(`/faculty/messages/groups/${groupId}/messages`);
+    return response.data;
+  },
+
+  sendFacultyChatGroupMessage: async (groupId, payload) => {
+    const response = await API.post(`/faculty/messages/groups/${groupId}/messages`, payload);
+    return response.data;
+  },
+
   createSupportQuery: async (payload) => {
     const response = await API.post("/messages/queries", payload);
     return response.data;
@@ -215,6 +235,21 @@ const PreferenceService = {
     return response.data;
   },
 
+  getFacultyTeachingPulse: async (semester) => {
+    const response = await API.get("/faculty/timetable/pulse", {
+      params: semester ? { semester } : {},
+    });
+    return response.data;
+  },
+
+  getFacultyUpcomingQueue: async ({ semester, limit } = {}) => {
+    const params = {};
+    if (semester) params.semester = semester;
+    if (limit) params.limit = limit;
+    const response = await API.get("/faculty/timetable/upcoming-queue", { params });
+    return response.data;
+  },
+
   getFacultyInstituteTimetable: async (semester) => {
     const response = await API.get("/faculty/timetable/institute", {
       params: semester ? { semester } : {},
@@ -266,6 +301,18 @@ const PreferenceService = {
 
   reviewFacultyAssignmentSubmission: async (submissionId, payload) => {
     const response = await API.patch(`/faculty/assignments/submissions/${submissionId}`, payload);
+    return response.data;
+  },
+
+  getAdminAssignmentSubmissionReviews: async (status = "pending") => {
+    const response = await API.get("/admin/assignments/submissions/reviews", {
+      params: status ? { status } : {},
+    });
+    return response.data;
+  },
+
+  reviewAdminAssignmentSubmission: async (submissionId, status) => {
+    const response = await API.patch(`/admin/assignments/submissions/${submissionId}/review`, { status });
     return response.data;
   },
 
@@ -377,6 +424,7 @@ const PreferenceService = {
     const response = await API.post(`/student/assignments/${assignmentId}/submission`, formData);
     return response.data;
   },
+
 };
 
 export default PreferenceService;

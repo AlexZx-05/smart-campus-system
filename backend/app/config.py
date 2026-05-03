@@ -56,6 +56,9 @@ class Config:
     MAIL_SMTP_PASSWORD = os.getenv("MAIL_SMTP_PASSWORD", "")
     MAIL_FROM_EMAIL = os.getenv("MAIL_FROM_EMAIL", "")
     MAIL_USE_TLS = os.getenv("MAIL_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"}
+    FACULTY_MAIL_SMTP_HOST = os.getenv("FACULTY_MAIL_SMTP_HOST", "smtp.gmail.com")
+    FACULTY_MAIL_SMTP_PORT = int(os.getenv("FACULTY_MAIL_SMTP_PORT", "587"))
+    FACULTY_MAIL_USE_TLS = os.getenv("FACULTY_MAIL_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"}
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:3000")
 
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")

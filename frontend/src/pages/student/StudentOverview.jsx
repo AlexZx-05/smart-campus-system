@@ -18,6 +18,7 @@ function StudentOverview({
   upcomingExamCount = 0,
   joinedClassrooms = [],
   courseEnrollments = [],
+  unreadNotificationCount = 0,
   settings = {
     emailNotifications: true,
     examAlerts: true,
@@ -85,7 +86,7 @@ function StudentOverview({
   const densityClass = settings.dashboardDensity === "compact" ? "space-y-3" : "space-y-5";
   const cardGap = settings.dashboardDensity === "compact" ? "gap-3" : "gap-4";
   const cardPadding = settings.dashboardDensity === "compact" ? "p-4" : "p-5";
-  const effectiveAnnouncementCount = settings.emailNotifications ? announcements.length : 0;
+  const effectiveAnnouncementCount = settings.emailNotifications ? unreadNotificationCount : 0;
   const computedCredits = (courseEnrollments?.length || 0) * 4;
 
   if (loading) {
