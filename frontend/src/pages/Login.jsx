@@ -269,13 +269,15 @@ function Login({ onLoginSuccess }) {
           )}
 
           {authMode === "password" ? (
-            <form onSubmit={handlePasswordLogin} className="space-y-6">
+            <form onSubmit={handlePasswordLogin} className="space-y-6" autoComplete="on">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Email address
                 </label>
                 <input
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   placeholder="student@university.edu"
                   className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                   value={email}
@@ -297,7 +299,9 @@ function Login({ onLoginSuccess }) {
 
                 <div className="relative">
                   <input
+                    name="password"
                     type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
                     placeholder="Enter your password"
                     className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-16 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                     value={password}
@@ -325,13 +329,15 @@ function Login({ onLoginSuccess }) {
               </button>
             </form>
           ) : (
-            <form onSubmit={handleVerifyOtp} className="space-y-4">
+            <form onSubmit={handleVerifyOtp} className="space-y-4" autoComplete="on">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Registered email
                 </label>
                 <input
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   placeholder="name@gmail.com"
                   className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                   value={email}
@@ -345,7 +351,9 @@ function Login({ onLoginSuccess }) {
                   Mobile number (if not saved)
                 </label>
                 <input
+                  name="phone_number"
                   type="tel"
+                  autoComplete="tel"
                   placeholder="+91XXXXXXXXXX"
                   className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                   value={phoneNumber}
@@ -357,7 +365,9 @@ function Login({ onLoginSuccess }) {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">OTP code</label>
                   <input
+                    name="otp_code"
                     type="text"
+                    autoComplete="one-time-code"
                     placeholder="Enter 6-digit OTP"
                     className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                     value={otpCode}

@@ -108,7 +108,7 @@ function Register() {
             </div>
           )}
 
-          <form onSubmit={handleRegister} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <form onSubmit={handleRegister} className="grid grid-cols-1 md:grid-cols-2 gap-4" autoComplete="on">
             <div className="md:col-span-2">
               <label className="block text-sm font-semibold text-slate-700 mb-2">Role</label>
               <select
@@ -124,9 +124,10 @@ function Register() {
 
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Name</label>
-              <input
-                name="name"
-                placeholder="Full name"
+                <input
+                  name="name"
+                  autoComplete="name"
+                  placeholder="Full name"
                 className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                 onChange={handleChange}
                 required
@@ -135,10 +136,11 @@ function Register() {
 
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Email</label>
-              <input
-                name="email"
-                type="email"
-                placeholder="name@example.com"
+                <input
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="name@example.com"
                 className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                 onChange={handleChange}
                 required
@@ -147,10 +149,11 @@ function Register() {
 
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Phone Number</label>
-              <input
-                name="phone_number"
-                type="tel"
-                placeholder="+91XXXXXXXXXX"
+                <input
+                  name="phone_number"
+                  type="tel"
+                  autoComplete="tel"
+                  placeholder="+91XXXXXXXXXX"
                 className="w-full rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                 onChange={handleChange}
                 required
@@ -164,6 +167,7 @@ function Register() {
                   name="password"
                   placeholder="Create password"
                   type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
                   className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-16 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition"
                   onChange={handleChange}
                   required
