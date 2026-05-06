@@ -67,6 +67,10 @@ def _mask_phone(phone):
     return f"{value[:3]}{'*' * max(4, len(value) - 7)}{value[-4:]}"
 
 
+def _is_user_active(user):
+    return bool(getattr(user, "is_active", True))
+
+
 def _send_reset_email(to_email, token):
     smtp_host = current_app.config.get("MAIL_SMTP_HOST")
     smtp_port = current_app.config.get("MAIL_SMTP_PORT")
@@ -250,6 +254,8 @@ def login():
 
     if not user or not check_password_hash(user.password, data.get("password")):
         return jsonify({"message": "Invalid credentials"}), 401
+    if not _is_user_active(user):
+        return jsonify({"message": "This account is disabled. Contact admin."}), 403
 
     if user.role == "admin" and not _is_admin_email_allowed(user.email):
         return jsonify({"message": "This admin account is not authorized in allowlist"}), 403
@@ -284,6 +290,8 @@ def login_google():
     user = User.query.filter_by(email=email).first()
     if not user:
         return jsonify({"message": "This Google email is not registered. Please register first."}), 404
+    if not _is_user_active(user):
+        return jsonify({"message": "This account is disabled. Contact admin."}), 403
 
     if user.role == "admin" and not _is_admin_email_allowed(user.email):
         return jsonify({"message": "This admin account is not authorized in allowlist"}), 403
@@ -312,6 +320,8 @@ def request_login_otp():
     user = User.query.filter_by(email=email).first()
     if not user:
         return jsonify({"message": "User not found"}), 404
+    if not _is_user_active(user):
+        return jsonify({"message": "This account is disabled. Contact admin."}), 403
 
     if user.role == "admin" and not _is_admin_email_allowed(user.email):
         return jsonify({"message": "This admin account is not authorized in allowlist"}), 403
@@ -387,6 +397,8 @@ def verify_login_otp():
     user = User.query.filter_by(email=email).first()
     if not user:
         return jsonify({"message": "User not found"}), 404
+    if not _is_user_active(user):
+        return jsonify({"message": "This account is disabled. Contact admin."}), 403
 
     if user.role == "admin" and not _is_admin_email_allowed(user.email):
         return jsonify({"message": "This admin account is not authorized in allowlist"}), 403

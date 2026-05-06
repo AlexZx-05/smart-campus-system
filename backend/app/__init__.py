@@ -69,6 +69,10 @@ def _ensure_user_auth_columns():
             )
         )
         db.session.commit()
+    if "is_active" not in column_names:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+        db.session.execute(text("UPDATE user SET is_active = 1 WHERE is_active IS NULL"))
+        db.session.commit()
 
 
 def _ensure_faculty_preference_columns():

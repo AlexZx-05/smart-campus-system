@@ -340,6 +340,7 @@ def _serialize_admin_user(user):
         "department": user.department,
         "year": user.year,
         "section": user.section,
+        "is_active": bool(user.is_active) if user.is_active is not None else True,
     }
 
 
@@ -1407,7 +1408,7 @@ def _notify_impacted_faculty_conflicts(admin_user_id, semester, unassigned, assi
 
         lines = []
         for item in items[:5]:
-            suggestion = _build_conflict_suggestion_for_unassigned(item, assigned_slots)
+            suggestion = item.get("suggestion") or _build_conflict_suggestion_for_unassigned(item, assigned_slots)
             base = (
                 f"- {item.get('subject') or 'Subject'} | {item.get('day')} "
                 f"{item.get('start_time')}-{item.get('end_time')} | "
@@ -1428,23 +1429,85 @@ def _notify_impacted_faculty_conflicts(admin_user_id, semester, unassigned, assi
             "Action: Open Conflict Requests and either accept suggested fix or request manual admin review."
         )
 
-        db.session.add(
-            FacultyPeerMessage(
-                sender_id=admin_user_id,
-                recipient_id=faculty_id,
-                subject=subject,
-                body=body,
-            )
-        )
+        conflict_title = f"Auto conflict: {semester or 'Timetable draft'}"
+        open_statuses = ["open", "pending", "in_review"]
 
-        db.session.add(
-            ConflictRequest(
-                title=f"Auto conflict: {semester or 'Timetable draft'}",
-                description=body,
-                status="open",
-                created_by=faculty_id,
+        existing_conflict = (
+            ConflictRequest.query
+            .filter(
+                ConflictRequest.created_by == faculty_id,
+                ConflictRequest.title == conflict_title,
+                ConflictRequest.status.in_(open_statuses),
             )
+            .order_by(ConflictRequest.created_at.desc())
+            .first()
         )
+        if existing_conflict:
+            existing_conflict.description = body
+            if existing_conflict.status != "open":
+                existing_conflict.status = "open"
+                existing_conflict.resolved_at = None
+        else:
+            db.session.add(
+                ConflictRequest(
+                    title=conflict_title,
+                    description=body,
+                    status="open",
+                    created_by=faculty_id,
+                )
+            )
+
+        latest_msg = (
+            FacultyPeerMessage.query
+            .filter(
+                FacultyPeerMessage.sender_id == admin_user_id,
+                FacultyPeerMessage.recipient_id == faculty_id,
+                FacultyPeerMessage.subject == subject,
+            )
+            .order_by(FacultyPeerMessage.created_at.desc())
+            .first()
+        )
+        should_send_new_message = not latest_msg or (latest_msg.body or "").strip() != body.strip()
+        if should_send_new_message:
+            db.session.add(
+                FacultyPeerMessage(
+                    sender_id=admin_user_id,
+                    recipient_id=faculty_id,
+                    subject=subject,
+                    body=body,
+                )
+            )
+
+
+def _cleanup_duplicate_auto_conflicts():
+    rows = (
+        ConflictRequest.query
+        .filter(ConflictRequest.title.like("Auto conflict:%"))
+        .order_by(
+            ConflictRequest.created_by.asc(),
+            ConflictRequest.title.asc(),
+            ConflictRequest.created_at.desc(),
+        )
+        .all()
+    )
+    grouped = {}
+    for row in rows:
+        key = (row.created_by, (row.title or "").strip().lower())
+        grouped.setdefault(key, []).append(row)
+
+    removed = 0
+    for _, items in grouped.items():
+        if len(items) <= 1:
+            continue
+        keeper = items[0]
+        for dup in items[1:]:
+            # Keep historical resolved rows only if they are materially different.
+            same_status = (dup.status or "").strip().lower() == (keeper.status or "").strip().lower()
+            same_desc = (dup.description or "").strip() == (keeper.description or "").strip()
+            if same_status or same_desc or (dup.status or "").strip().lower() in {"open", "pending", "in_review"}:
+                db.session.delete(dup)
+                removed += 1
+    return removed
 
 
 def _notify_faculty_timetable_conflicts(admin_user_id, semester, total_requested, total_assigned, unassigned):
@@ -1602,6 +1665,140 @@ def get_my_preferences():
     return jsonify([_serialize_preference(pref) for pref in prefs]), 200
 
 
+@preference_bp.route("/api/faculty/preferences/<int:preference_id>", methods=["PATCH"])
+@jwt_required()
+def update_my_preference(preference_id):
+    user = _get_current_user()
+    if not user or user.role != "faculty":
+        return jsonify({"message": "Forbidden"}), 403
+
+    pref = FacultyPreference.query.get(preference_id)
+    if not pref:
+        return jsonify({"message": "Preference not found"}), 404
+    if pref.faculty_id != user.id:
+        return jsonify({"message": "Forbidden"}), 403
+
+    data = request.get_json() or {}
+    old_snapshot = _serialize_preference(pref)
+
+    if "day" in data:
+        day = _normalize_day(data.get("day"))
+        if not day:
+            return jsonify({"message": "Invalid day"}), 400
+        pref.day = day
+
+    if "start_time" in data or "end_time" in data:
+        next_start = (data.get("start_time") if "start_time" in data else pref.start_time) or ""
+        next_end = (data.get("end_time") if "end_time" in data else pref.end_time) or ""
+        next_start = str(next_start).strip()
+        next_end = str(next_end).strip()
+        if not _is_valid_time_range(next_start, next_end):
+            return jsonify({"message": "start_time must be earlier than end_time"}), 400
+        pref.start_time = next_start
+        pref.end_time = next_end
+
+    if "subject" in data:
+        subject = (data.get("subject") or "").strip()
+        if not subject:
+            return jsonify({"message": "Subject is required"}), 400
+        pref.subject = subject
+
+    if "student_count" in data:
+        try:
+            student_count = int(data.get("student_count"))
+        except (TypeError, ValueError):
+            return jsonify({"message": "student_count must be a number"}), 400
+        if student_count <= 0:
+            return jsonify({"message": "student_count must be greater than 0"}), 400
+        pref.student_count = student_count
+
+    if "semester" in data:
+        semester = (data.get("semester") or "").strip()
+        if not semester:
+            return jsonify({"message": "semester is required"}), 400
+        pref.semester = semester
+
+    if "department" in data:
+        department = (data.get("department") or "").strip() or None
+        pref.department = department.upper() if department else None
+    if "year" in data:
+        year = _parse_int(data.get("year"))
+        if data.get("year") not in (None, "") and (year is None or year <= 0):
+            return jsonify({"message": "year must be a positive number"}), 400
+        pref.year = year
+    if "section" in data:
+        section = (data.get("section") or "").strip() or None
+        pref.section = section.upper() if section else None
+    if "details" in data:
+        pref.details = (data.get("details") or "").strip()
+
+    duplicate = FacultyPreference.query.filter(
+        FacultyPreference.id != pref.id,
+        FacultyPreference.faculty_id == user.id,
+        FacultyPreference.semester == pref.semester,
+        FacultyPreference.day == pref.day,
+        FacultyPreference.start_time == pref.start_time,
+        FacultyPreference.end_time == pref.end_time,
+        FacultyPreference.status != "rejected",
+    ).first()
+    if duplicate:
+        return jsonify({"message": "Another preference already exists for this slot"}), 400
+
+    # Faculty edits must go through admin approval again.
+    pref.status = "pending"
+    db.session.commit()
+
+    old_slot = f"{old_snapshot.get('day')} {old_snapshot.get('start_time')}-{old_snapshot.get('end_time')}"
+    new_slot = f"{pref.day} {pref.start_time}-{pref.end_time}"
+    notify_title = f"Faculty preference updated (review required) - {pref.semester or 'Current Semester'}"
+    notify_description = (
+        f"[PreferenceID:{pref.id}]\n"
+        f"Faculty: {user.name} ({user.email})\n"
+        f"Subject: {pref.subject}\n"
+        f"Class: {pref.department or '-'} / {pref.year or '-'} / {pref.section or '-'}\n"
+        f"Old slot: {old_slot}\n"
+        f"New slot: {new_slot}\n\n"
+        "Admin action required: review and approve this updated preference, then regenerate/publish timetable."
+    )
+
+    existing = (
+        SupportQuery.query
+        .filter(
+            SupportQuery.sender_id == user.id,
+            SupportQuery.sender_role == "faculty",
+            SupportQuery.subject == notify_title,
+            SupportQuery.status.in_(["open", "in_progress"]),
+            SupportQuery.body.contains(f"[PreferenceID:{pref.id}]"),
+        )
+        .order_by(SupportQuery.created_at.desc())
+        .first()
+    )
+    if existing:
+        existing.body = notify_description
+        existing.priority = "high"
+        existing.category = "timetable"
+        existing.status = "open"
+        existing.updated_at = datetime.utcnow()
+    else:
+        db.session.add(
+            SupportQuery(
+                sender_id=user.id,
+                sender_role="faculty",
+                subject=notify_title,
+                body=notify_description,
+                category="timetable",
+                priority="high",
+                status="open",
+            )
+        )
+
+    db.session.commit()
+    return jsonify({
+        "message": "Preference updated. Admin has been notified to review and update timetable.",
+        "preference": _serialize_preference(pref),
+    }), 200
+
+
 @preference_bp.route("/api/admin/preferences", methods=["GET"])
 @jwt_required()
 def get_all_preferences():
@@ -1708,6 +1905,12 @@ def generate_timetable_from_preferences():
 
     draft_slots = [_build_timetable_slot_from_preference(pref) for pref in approved]
     timetable, unassigned = _auto_assign_rooms_for_slots(draft_slots)
+    unassigned_with_suggestions = []
+    for item in unassigned:
+        enriched = dict(item)
+        enriched["suggestion"] = _build_conflict_suggestion_for_unassigned(item, timetable)
+        unassigned_with_suggestions.append(enriched)
+
     if not semester and timetable:
         semester = timetable[0]["semester"]
 
@@ -1725,19 +1928,14 @@ def generate_timetable_from_preferences():
             }
         faculty_summary[key]["total_slots"] += 1
 
-    _notify_faculty_timetable_conflicts(
-        admin_user_id=user.id,
-        semester=semester,
-        total_requested=len(draft_slots),
-        total_assigned=len(timetable),
-        unassigned=unassigned,
-    )
+    # Notify only impacted faculty members via direct messages.
     _notify_impacted_faculty_conflicts(
         admin_user_id=user.id,
         semester=semester,
-        unassigned=unassigned,
+        unassigned=unassigned_with_suggestions,
         assigned_slots=timetable,
     )
+    _cleanup_duplicate_auto_conflicts()
     db.session.commit()
 
     return jsonify({
@@ -1745,8 +1943,8 @@ def generate_timetable_from_preferences():
         "semester": semester,
         "total_requested": len(draft_slots),
         "total_slots": len(timetable),
-        "total_unassigned": len(unassigned),
-        "unassigned": unassigned,
+        "total_unassigned": len(unassigned_with_suggestions),
+        "unassigned": unassigned_with_suggestions,
         "faculty_summary": list(faculty_summary.values()),
         "timetable": timetable,
     }), 200
@@ -2598,6 +2796,22 @@ def get_admin_users():
     return jsonify(rows), 200
 
 
+@preference_bp.route("/api/admin/classrooms", methods=["GET"])
+@jwt_required()
+def get_admin_classrooms():
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    rows = (
+        Classroom.query
+        .filter(Classroom.is_active == True)  # noqa: E712
+        .order_by(Classroom.created_at.desc())
+        .all()
+    )
+    return jsonify([_serialize_classroom(row) for row in rows]), 200
+
+
 @preference_bp.route("/api/admin/messages", methods=["GET"])
 @jwt_required()
 def get_admin_messages():
@@ -3090,6 +3304,9 @@ def get_admin_conflicts():
     if not user or user.role != "admin":
         return jsonify({"message": "Forbidden"}), 403
 
+    _cleanup_duplicate_auto_conflicts()
+    db.session.commit()
+
     status = (request.args.get("status") or "").strip().lower()
     query = ConflictRequest.query
     if status in {"open", "in_review", "resolved", "closed", "pending"}:
@@ -3177,6 +3394,21 @@ def resolve_admin_conflict(conflict_id):
 
     row.status = "resolved"
     row.resolved_at = datetime.utcnow()
+    impacted_user = User.query.get(row.created_by) if row.created_by else None
+    if impacted_user and impacted_user.role == "faculty":
+        db.session.add(
+            FacultyPeerMessage(
+                sender_id=user.id,
+                recipient_id=impacted_user.id,
+                subject=f"Conflict Resolved - {row.title}",
+                body=(
+                    "Your conflict request has been marked as resolved by Admin.\n\n"
+                    f"Title: {row.title}\n"
+                    f"Details: {(row.description or '').strip() or '-'}\n\n"
+                    "If this does not match your expectation, raise a new conflict request."
+                ),
+            )
+        )
     db.session.commit()
     _log_admin_activity(user.id, "conflict_resolve", f"Resolved conflict #{row.id}: {row.title}")
     db.session.commit()
@@ -3195,6 +3427,21 @@ def review_admin_conflict(conflict_id):
         return jsonify({"message": "Conflict not found"}), 404
 
     row.status = "in_review"
+    impacted_user = User.query.get(row.created_by) if row.created_by else None
+    if impacted_user and impacted_user.role == "faculty":
+        db.session.add(
+            FacultyPeerMessage(
+                sender_id=user.id,
+                recipient_id=impacted_user.id,
+                subject=f"Conflict In Review - {row.title}",
+                body=(
+                    "Your conflict request is now in review by Admin.\n\n"
+                    f"Title: {row.title}\n"
+                    f"Details: {(row.description or '').strip() or '-'}\n\n"
+                    "You will be notified once resolution is finalized."
+                ),
+            )
+        )
     db.session.commit()
     _log_admin_activity(user.id, "conflict_review", f"Marked conflict #{row.id} as in_review")
     db.session.commit()
@@ -4019,11 +4266,56 @@ def get_admin_assignment_submission_reviews():
         query = query.filter(AssignmentSubmission.admin_review_status == status_filter)
 
     rows = query.order_by(AssignmentSubmission.updated_at.desc()).all()
+
+    # Map submissions to actual faculty-created classrooms so admin reviews are classroom-wise.
+    def _review_classroom_key(faculty_id, subject, semester, department, year, section):
+        return (
+            int(faculty_id) if faculty_id is not None else None,
+            _normalize_text_key(subject),
+            (semester or "").strip().lower(),
+            _normalize_text_key(department),
+            int(year) if year is not None else None,
+            (section or "").strip().upper(),
+        )
+
+    classroom_rows = (
+        Classroom.query
+        .filter(Classroom.is_active == True)  # noqa: E712
+        .order_by(Classroom.created_at.desc())
+        .all()
+    )
+    classroom_map = {}
+    for room in classroom_rows:
+        key = _review_classroom_key(
+            room.faculty_id,
+            room.subject,
+            room.semester,
+            room.department,
+            room.year,
+            room.section,
+        )
+        # Keep the latest created classroom for a given academic scope.
+        if key not in classroom_map:
+            classroom_map[key] = room
+
     payload = []
     for row in rows:
         item = _serialize_submission_for_faculty(row)
         assignment = Assignment.query.get(row.assignment_id)
         item["assignment"] = _serialize_assignment(assignment) if assignment else None
+        if assignment:
+            room_key = _review_classroom_key(
+                assignment.created_by,
+                assignment.subject,
+                assignment.semester,
+                assignment.department,
+                assignment.year,
+                assignment.section,
+            )
+            classroom = classroom_map.get(room_key)
+            item["classroom"] = _serialize_classroom(classroom) if classroom else None
+        else:
+            item["classroom"] = None
         payload.append(item)
     return jsonify(payload), 200
 
@@ -4406,6 +4698,15 @@ def update_admin_user(user_id):
     if "section" in data:
         section = (data.get("section") or "").strip() or None
         user.section = section.upper() if section else None
+
+    if "is_active" in data:
+        try:
+            next_active = _to_bool(data.get("is_active"))
+        except ValueError:
+            return jsonify({"message": "is_active must be true or false"}), 400
+        if user.id == admin.id and next_active is False:
+            return jsonify({"message": "You cannot disable your own account"}), 400
+        user.is_active = next_active
 
     if user.role in {"student", "faculty"} and not user.roll_number:
         return jsonify({"message": "Roll/Employee number is required for student/faculty"}), 400

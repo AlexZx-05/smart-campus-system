@@ -18,6 +18,7 @@ const notificationAvatarPalette = [
 ];
 const LAST_SELECTED_TEACHER_KEY = "faculty_last_selected_teacher_id";
 const TEACHER_THREAD_LAST_SEEN_KEY = "faculty_teacher_thread_last_seen";
+const FACULTY_SUPPORT_LAST_SEEN_KEY = "faculty_support_last_seen_ms";
 
 const notificationInitialsFrom = (name = "") =>
   name
@@ -78,6 +79,9 @@ function FacultyDashboard({ onLogout }) {
   const [myPreferences, setMyPreferences] = useState([]);
   const [expandedPreferenceSubject, setExpandedPreferenceSubject] = useState(null);
   const [loadingMyPreferences, setLoadingMyPreferences] = useState(false);
+  const [editingMyPreferenceId, setEditingMyPreferenceId] = useState(null);
+  const [myPreferenceEditForm, setMyPreferenceEditForm] = useState({ day: "Monday", start_time: "", end_time: "", details: "" });
+  const [savingMyPreferenceEdit, setSavingMyPreferenceEdit] = useState(false);
   const [facultyTimetable, setFacultyTimetable] = useState([]);
   const [todaySchedule, setTodaySchedule] = useState([]);
   const [teachingPulse, setTeachingPulse] = useState(null);
@@ -257,6 +261,16 @@ function FacultyDashboard({ onLogout }) {
   const [submissionReviewDrafts, setSubmissionReviewDrafts] = useState({});
   const [assignmentNowMs, setAssignmentNowMs] = useState(Date.now());
   const [dashboardNow, setDashboardNow] = useState(() => new Date());
+  const [supportUnreadCount, setSupportUnreadCount] = useState(0);
+  const [supportLastSeenMs, setSupportLastSeenMs] = useState(() => {
+    try {
+      const raw = localStorage.getItem(FACULTY_SUPPORT_LAST_SEEN_KEY);
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch (_) {
+      return 0;
+    }
+  });
   const composeTeacherMessageRef = useRef(null);
   const teacherMenuRef = useRef(null);
   const chatDocInputRef = useRef(null);
@@ -264,6 +278,32 @@ function FacultyDashboard({ onLogout }) {
   const classroomTabContentRef = useRef(null);
   const classroomTabsRef = useRef(null);
   const classworkCreateMenuRef = useRef(null);
+  const teacherChatMetaById = useMemo(
+    () =>
+      (teacherDirectory || []).reduce((acc, teacher) => {
+        const matchedMessages = (facultyInbox || []).filter((msg) => {
+          return Number(msg.sender_id) === Number(teacher.id) || Number(msg.recipient_id) === Number(teacher.id);
+        });
+        const recent = matchedMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
+        const seenMs = Number(teacherThreadLastSeenById?.[String(teacher.id)] || 0);
+        const unreadCount = matchedMessages.filter((msg) => {
+          if (Number(msg.sender_id) !== Number(teacher.id)) return false;
+          const ts = new Date(msg.created_at || 0).getTime();
+          return Number.isFinite(ts) && ts > seenMs;
+        }).length;
+        acc[String(teacher.id)] = {
+          preview: recent,
+          latestMessageMs: recent?.created_at ? new Date(recent.created_at).getTime() : 0,
+          unreadCount,
+        };
+        return acc;
+      }, {}),
+    [teacherDirectory, facultyInbox, teacherThreadLastSeenById]
+  );
+  const unreadTeacherCount = useMemo(
+    () => Object.values(teacherChatMetaById).filter((row) => Number(row?.unreadCount || 0) > 0).length,
+    [teacherChatMetaById]
+  );
 
   const sidebarItems = [
     { key: "dashboard", label: "Dashboard" },
@@ -273,8 +313,8 @@ function FacultyDashboard({ onLogout }) {
     { key: "assignments", label: "Classroom" },
     { key: "calendar", label: "Calendar" },
     { key: "notifications", label: "Notifications" },
-    { key: "messages", label: "Messages" },
-    { key: "teachers", label: "Teachers" },
+    { key: "messages", label: "Support", badgeCount: supportUnreadCount },
+    { key: "teachers", label: "Messages", badgeCount: unreadTeacherCount },
     { key: "conflicts", label: "Conflict Requests" },
     { key: "profile", label: "Profile" },
   ];
@@ -287,8 +327,8 @@ function FacultyDashboard({ onLogout }) {
     assignments: "Classroom",
     calendar: "Calendar",
     notifications: "Notifications",
-    messages: "Messages",
-    teachers: "Teachers",
+    messages: "Support",
+    teachers: "Messages",
     conflicts: "Conflict Requests",
     profile: "Profile",
   };
@@ -522,6 +562,30 @@ function FacultyDashboard({ onLogout }) {
     await Promise.all([loadInboxMessages(), loadFacultyPeerInbox(), loadFacultyChatGroups()]);
   };
 
+  const markSupportAsSeen = () => {
+    const nowMs = Date.now();
+    setSupportLastSeenMs(nowMs);
+    setSupportUnreadCount(0);
+    try {
+      localStorage.setItem(FACULTY_SUPPORT_LAST_SEEN_KEY, String(nowMs));
+    } catch (_) {}
+  };
+
+  const loadSupportUnreadCount = async () => {
+    try {
+      const rows = await PreferenceService.getMySupportQueries();
+      const unread = (rows || []).filter((row) => {
+        const hasReply = String(row?.admin_note || "").trim().length > 0;
+        if (!hasReply) return false;
+        const ts = new Date(row?.updated_at || row?.created_at || 0).getTime();
+        return Number.isFinite(ts) && ts > supportLastSeenMs;
+      }).length;
+      setSupportUnreadCount(unread);
+    } catch (_) {
+      setSupportUnreadCount(0);
+    }
+  };
+
   const loadFacultyConflicts = async () => {
     setLoadingFacultyConflicts(true);
     setConflictLoadError("");
@@ -628,6 +692,7 @@ function FacultyDashboard({ onLogout }) {
         if (res?.user?.id) setCurrentUserId(res.user.id);
       })
       .catch(() => {});
+    loadSupportUnreadCount();
   }, []);
 
   useEffect(() => {
@@ -666,6 +731,22 @@ function FacultyDashboard({ onLogout }) {
       loadFacultyTimetable();
     }
   }, [semesterFilter]);
+
+  useEffect(() => {
+    if (activePage === "messages") {
+      markSupportAsSeen();
+      return;
+    }
+    loadSupportUnreadCount();
+  }, [activePage]);
+
+  useEffect(() => {
+    if (activePage === "messages") return undefined;
+    const timer = setInterval(() => {
+      loadSupportUnreadCount();
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [activePage, supportLastSeenMs]);
 
   useEffect(() => {
     if (activePage !== "dashboard") return undefined;
@@ -1708,6 +1789,50 @@ function FacultyDashboard({ onLogout }) {
       setClassroomInviteError(err.response?.data?.message || "Failed to add student access email.");
     } finally {
       setSavingClassroomAccessEmail(false);
+    }
+  };
+
+  const startMyPreferenceEdit = (pref) => {
+    setEditingMyPreferenceId(pref.id);
+    setMyPreferenceEditForm({
+      day: pref.day || "Monday",
+      start_time: pref.start_time || "",
+      end_time: pref.end_time || "",
+      details: pref.details || "",
+    });
+    setPreferenceMessage("");
+    setPreferenceError("");
+  };
+
+  const cancelMyPreferenceEdit = () => {
+    setEditingMyPreferenceId(null);
+    setMyPreferenceEditForm({ day: "Monday", start_time: "", end_time: "", details: "" });
+  };
+
+  const saveMyPreferenceEdit = async (pref) => {
+    if (!editingMyPreferenceId) return;
+    if (!myPreferenceEditForm.day || !myPreferenceEditForm.start_time || !myPreferenceEditForm.end_time) {
+      setPreferenceError("Day, start time and end time are required.");
+      return;
+    }
+    setSavingMyPreferenceEdit(true);
+    setPreferenceMessage("");
+    setPreferenceError("");
+    try {
+      const res = await PreferenceService.updateMyFacultyPreference(pref.id, {
+        day: myPreferenceEditForm.day,
+        start_time: myPreferenceEditForm.start_time,
+        end_time: myPreferenceEditForm.end_time,
+        details: myPreferenceEditForm.details,
+      });
+      setPreferenceMessage(res?.message || "Preference updated successfully.");
+      cancelMyPreferenceEdit();
+      await loadMyPreferences();
+      await loadFacultyConflicts();
+    } catch (err) {
+      setPreferenceError(err.response?.data?.message || "Failed to update preference.");
+    } finally {
+      setSavingMyPreferenceEdit(false);
     }
   };
 
@@ -2842,9 +2967,65 @@ function FacultyDashboard({ onLogout }) {
                             {group.entries.map((pref) => (
                               <div key={pref.id} className="rounded-md border border-slate-200 bg-white px-3 py-2.5">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="text-sm font-medium text-slate-800">
-                                    {pref.day} | {pref.start_time} - {pref.end_time}
-                                  </p>
+                                  {editingMyPreferenceId === pref.id ? (
+                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-4 md:items-end">
+                                      <div>
+                                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Day</label>
+                                        <select
+                                          value={myPreferenceEditForm.day}
+                                          onChange={(e) => setMyPreferenceEditForm((prev) => ({ ...prev, day: e.target.value }))}
+                                          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+                                        >
+                                          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
+                                            <option key={day} value={day}>
+                                              {day}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Start</label>
+                                        <input
+                                          type="time"
+                                          value={myPreferenceEditForm.start_time}
+                                          onChange={(e) => setMyPreferenceEditForm((prev) => ({ ...prev, start_time: e.target.value }))}
+                                          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">End</label>
+                                        <input
+                                          type="time"
+                                          value={myPreferenceEditForm.end_time}
+                                          onChange={(e) => setMyPreferenceEditForm((prev) => ({ ...prev, end_time: e.target.value }))}
+                                          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+                                        />
+                                      </div>
+                                      <div className="flex gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => saveMyPreferenceEdit(pref)}
+                                          disabled={savingMyPreferenceEdit}
+                                          className={`rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 ${
+                                            savingMyPreferenceEdit ? "cursor-not-allowed opacity-60" : ""
+                                          }`}
+                                        >
+                                          Save
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={cancelMyPreferenceEdit}
+                                          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm font-medium text-slate-800">
+                                      {pref.day} | {pref.start_time} - {pref.end_time}
+                                    </p>
+                                  )}
                                   <span
                                     className={`rounded-full border px-2 py-0.5 text-xs ${
                                       preferenceStatusClasses[pref.status] ||
@@ -2857,6 +3038,20 @@ function FacultyDashboard({ onLogout }) {
                                 <p className="mt-1 text-xs text-slate-500">
                                   Submitted: {pref.created_at ? new Date(pref.created_at).toLocaleString() : "-"}
                                 </p>
+                                {pref.details && (
+                                  <p className="mt-1.5 text-xs text-slate-600 whitespace-pre-wrap">{pref.details}</p>
+                                )}
+                                {editingMyPreferenceId !== pref.id && (
+                                  <div className="mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => startMyPreferenceEdit(pref)}
+                                      className="rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                                    >
+                                      Edit Slot
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -4531,25 +4726,6 @@ function FacultyDashboard({ onLogout }) {
         : selectedTeacher
         ? `${selectedTeacher.department || "Faculty"}${selectedTeacher.email ? ` | ${selectedTeacher.email}` : ""}`
         : "Select a teacher to begin conversation";
-      const teacherChatMetaById = (teacherDirectory || []).reduce((acc, teacher) => {
-        const matchedMessages = (facultyInbox || [])
-          .filter((msg) => {
-            return Number(msg.sender_id) === Number(teacher.id) || Number(msg.recipient_id) === Number(teacher.id);
-          });
-        const recent = matchedMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
-        const seenMs = Number(teacherThreadLastSeenById?.[String(teacher.id)] || 0);
-        const unreadCount = matchedMessages.filter((msg) => {
-          if (Number(msg.sender_id) !== Number(teacher.id)) return false;
-          const ts = new Date(msg.created_at || 0).getTime();
-          return Number.isFinite(ts) && ts > seenMs;
-        }).length;
-        acc[String(teacher.id)] = {
-          preview: recent,
-          latestMessageMs: recent?.created_at ? new Date(recent.created_at).getTime() : 0,
-          unreadCount,
-        };
-        return acc;
-      }, {});
       const sortedTeacherDirectory = [...teacherDirectory].sort((a, b) => {
         const aMeta = teacherChatMetaById[String(a.id)];
         const bMeta = teacherChatMetaById[String(b.id)];
@@ -4778,6 +4954,8 @@ function FacultyDashboard({ onLogout }) {
                           className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
                             isSelected
                               ? "border-blue-300 bg-blue-50 shadow-[inset_3px_0_0_0_#2563eb]"
+                              : unreadCount > 0
+                              ? "border-blue-100 bg-blue-50/40 hover:border-blue-200 hover:bg-blue-50"
                               : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
                           }`}
                         >

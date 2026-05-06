@@ -407,7 +407,7 @@ def update_event(event_id):
     if user.role == "student":
         if event.created_by != user.id or creator_role != "student":
             return jsonify({"message": "Students can edit only their private events"}), 403
-    elif event.created_by != user.id:
+    elif user.role != "admin" and event.created_by != user.id:
         return jsonify({"message": "Only event creator can edit"}), 403
 
     data = request.get_json() or {}
@@ -444,7 +444,7 @@ def delete_event(event_id):
     if user.role == "student":
         if event.created_by != user.id or creator_role != "student":
             return jsonify({"message": "Students can delete only their private events"}), 403
-    elif event.created_by != user.id:
+    elif user.role != "admin" and event.created_by != user.id:
         return jsonify({"message": "Only event creator can delete"}), 403
 
     db.session.delete(event)

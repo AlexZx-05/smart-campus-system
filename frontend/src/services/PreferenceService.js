@@ -11,6 +11,11 @@ const PreferenceService = {
     return response.data;
   },
 
+  updateMyFacultyPreference: async (preferenceId, payload) => {
+    const response = await API.patch(`/faculty/preferences/${preferenceId}`, payload);
+    return response.data;
+  },
+
   getAllFacultyPreferences: async (semester) => {
     const response = await API.get("/admin/preferences", {
       params: semester ? { semester } : {},
@@ -98,6 +103,11 @@ const PreferenceService = {
     if (role) params.role = role;
     if (q) params.q = q;
     const response = await API.get("/admin/users", { params });
+    return response.data;
+  },
+
+  getAdminClassrooms: async () => {
+    const response = await API.get("/admin/classrooms");
     return response.data;
   },
 

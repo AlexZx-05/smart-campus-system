@@ -130,8 +130,8 @@ function UsersIcon() {
 function MessageIcon() {
   return (
     <svg className={iconClass} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8A2.5 2.5 0 0 1 17.5 17H9l-5 3v-3.5A2.5 2.5 0 0 1 4 14V6.5Z" />
-      <path d="M7.5 8.5h9M7.5 12h6" />
+      <path d="M12 4a7 7 0 0 0-7 7v2.5A2.5 2.5 0 0 0 7.5 16H9v-5H7.5A4.5 4.5 0 0 1 12 6.5 4.5 4.5 0 0 1 16.5 11H15v5h1.5A2.5 2.5 0 0 0 19 13.5V11a7 7 0 0 0-7-7Z" />
+      <path d="M10 19h4" />
     </svg>
   );
 }
@@ -160,11 +160,12 @@ const icons = {
   assignments: BookOpenIcon,
   progress: ChartIcon,
   queries: ChatIcon,
-  teachers: UsersIcon,
+  teachers: ChatIcon,
   calendar: CalendarIcon,
   calender: CalendarIcon,
   "calendar-control": CalendarIcon,
   profile: UserIcon,
+  "admin-profile": UserIcon,
   settings: SettingsIcon,
 };
 
@@ -179,7 +180,7 @@ function Sidebar({
   return (
     <aside
       className={`h-screen bg-slate-950 text-slate-200 px-2.5 py-2 md:px-3 md:py-2.5 shrink-0 overflow-hidden border-r border-slate-800 transition-all duration-300 flex flex-col ${
-        isOpen ? "w-[272px]" : "w-[84px]"
+        isOpen ? "w-[286px]" : "w-[84px]"
       }`}
     >
       <div className={`px-1 py-1 ${isOpen ? "" : "flex flex-col items-center"}`}>
@@ -198,8 +199,8 @@ function Sidebar({
 
         {isOpen ? (
           <div className="mt-2">
-            <h2 className="text-xl font-bold text-white tracking-tight leading-tight">Smart Campus</h2>
-            <p className="text-xs text-slate-400 mt-1 tracking-wide">{portalLabel}</p>
+            <h2 className="text-[30px] font-semibold text-white tracking-tight leading-none">Smart Campus</h2>
+            <p className="text-xs font-medium text-slate-400 mt-1 tracking-wide uppercase">{portalLabel}</p>
           </div>
         ) : (
           <div className="h-2 w-2" />
@@ -207,25 +208,53 @@ function Sidebar({
       </div>
 
       <nav className="scrollbar-hidden mt-2 flex-1 min-h-0 overflow-y-auto pr-0.5">
+        {isOpen && (
+          <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+            Navigation
+          </p>
+        )}
         {items.map((item) => {
           const Icon = icons[item.key] || DashboardIcon;
           const isActive = activePage === item.key;
+          const badgeCount = Number(item.badgeCount || 0);
+          const showBadge = badgeCount > 0;
 
           return (
             <button
               key={item.key}
               onClick={() => onPageChange(item.key)}
               title={!isOpen ? item.label : undefined}
-              className={`group w-full flex items-center rounded-xl text-[15px] transition-all ${
+              className={`group relative w-full flex items-center rounded-xl text-[15px] transition-all ${
                 isActive
-                  ? "bg-slate-800 border border-slate-700 text-white shadow-md"
-                  : "text-slate-300 hover:text-white hover:bg-slate-900"
-              } ${isOpen ? "mb-1.5" : "mb-3.5"}`}
+                  ? "bg-gradient-to-r from-slate-800 to-slate-700 border border-slate-600 text-white shadow-md"
+                  : "text-slate-300 hover:text-white hover:bg-slate-900/90"
+              } ${isOpen ? "mb-1.5 min-h-11" : "mb-3.5"}`}
             >
-              <span className={`inline-flex items-center ${isOpen ? "h-10 w-10 ml-1 justify-center" : "h-11 w-full justify-center"}`}>
+              {isActive && isOpen && <span className="absolute left-0 h-6 w-1 rounded-r-full bg-cyan-400" />}
+              <span className={`relative inline-flex items-center ${isOpen ? "h-10 w-10 ml-1 justify-center" : "h-11 w-full justify-center"}`}>
                 <Icon />
+                {showBadge && !isOpen && (
+                  <span
+                    className="absolute right-1.5 top-1.5 inline-flex min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 py-0.5 text-[9px] font-semibold leading-none text-white ring-2 ring-slate-950"
+                    aria-label={`${badgeCount} unread`}
+                  >
+                    {badgeCount > 99 ? "99+" : badgeCount}
+                  </span>
+                )}
               </span>
-              {isOpen && <span className="pr-3 truncate font-medium">{item.label}</span>}
+              {isOpen && (
+                <span className="pr-3 truncate font-semibold tracking-tight">
+                  {item.label}
+                  {showBadge && (
+                    <span
+                      className="ml-2 inline-flex min-w-5 items-center justify-center rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+                      aria-label={`${badgeCount} unread`}
+                    >
+                      {badgeCount > 99 ? "99+" : badgeCount}
+                    </span>
+                  )}
+                </span>
+              )}
             </button>
           );
         })}
