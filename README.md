@@ -7,6 +7,10 @@ It has 3 roles:
 - `Faculty`
 - `Admin`
 
+## Demo Video
+
+▶️ [Watch Full Demo](https://drive.google.com/file/d/1MoykF2Rx-kDCPzKScSSWKLYLxVxo-InG/view?usp=sharing)
+
 The app helps manage timetable preferences, room allocation, admin announcements, calendar events, user management, and profile data.
 
 ## Tech Stack
