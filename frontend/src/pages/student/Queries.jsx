@@ -8,6 +8,11 @@ const defaultForm = {
   priority: "normal",
   attachment: null,
 };
+const defaultTeacherMessageForm = {
+  recipient_id: "",
+  subject: "",
+  body: "",
+};
 
 const statusClasses = {
   open: "bg-amber-50 text-amber-700 border-amber-200",
@@ -73,6 +78,10 @@ function Queries() {
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
   const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState("");
+  const [facultyDirectory, setFacultyDirectory] = useState([]);
+  const [loadingFacultyDirectory, setLoadingFacultyDirectory] = useState(false);
+  const [teacherMessageForm, setTeacherMessageForm] = useState(defaultTeacherMessageForm);
+  const [sendingTeacherMessage, setSendingTeacherMessage] = useState(false);
 
   const loadQueries = async () => {
     setLoadingQueries(true);
@@ -92,8 +101,21 @@ function Queries() {
     }
   };
 
+  const loadFacultyDirectory = async () => {
+    setLoadingFacultyDirectory(true);
+    try {
+      const data = await PreferenceService.getFacultyDirectory();
+      setFacultyDirectory(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setFacultyDirectory([]);
+    } finally {
+      setLoadingFacultyDirectory(false);
+    }
+  };
+
   useEffect(() => {
     loadQueries();
+    loadFacultyDirectory();
   }, []);
 
   useEffect(() => {
@@ -204,6 +226,34 @@ function Queries() {
     }
   };
 
+  const handleTeacherMessageChange = (e) => {
+    const { name, value } = e.target;
+    setTeacherMessageForm((prev) => ({ ...prev, [name]: value }));
+    setSuccess("");
+    setError("");
+  };
+
+  const handleTeacherMessageSubmit = async (e) => {
+    e.preventDefault();
+    setSendingTeacherMessage(true);
+    setSuccess("");
+    setError("");
+    try {
+      const payload = {
+        recipient_id: Number(teacherMessageForm.recipient_id),
+        subject: teacherMessageForm.subject,
+        body: teacherMessageForm.body,
+      };
+      const res = await PreferenceService.sendFacultyPeerMessage(payload);
+      setSuccess(res.message || "Message sent to teacher.");
+      setTeacherMessageForm(defaultTeacherMessageForm);
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to send message to teacher.");
+    } finally {
+      setSendingTeacherMessage(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       {(success || error) && (
@@ -221,19 +271,86 @@ function Queries() {
         </div>
       )}
 
+      <section className="rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-indigo-50/25 p-5 shadow-sm ring-1 ring-indigo-100/50">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-indigo-700">Teacher Connect</p>
+            <h3 className="mt-1 text-lg font-semibold text-slate-800">Message a Teacher</h3>
+            <p className="mt-1 text-sm text-slate-500">Send a direct academic message to an existing faculty member.</p>
+          </div>
+          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+            Faculty {facultyDirectory.length}
+          </span>
+        </div>
+
+        <form onSubmit={handleTeacherMessageSubmit} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-600">Teacher</label>
+            <select
+              name="recipient_id"
+              value={teacherMessageForm.recipient_id}
+              onChange={handleTeacherMessageChange}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              required
+            >
+              <option value="">{loadingFacultyDirectory ? "Loading faculty..." : "Select teacher"}</option>
+              {facultyDirectory.map((faculty) => (
+                <option key={faculty.id} value={faculty.id}>
+                  {faculty.name} ({faculty.email})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-600">Subject</label>
+            <input
+              name="subject"
+              value={teacherMessageForm.subject}
+              onChange={handleTeacherMessageChange}
+              placeholder="Question about assignment / topic"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              required
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-600">Message</label>
+            <textarea
+              name="body"
+              rows={3}
+              value={teacherMessageForm.body}
+              onChange={handleTeacherMessageChange}
+              placeholder="Write your message to the teacher..."
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              required
+            />
+          </div>
+          <div className="md:col-span-2 flex justify-end">
+            <button
+              type="submit"
+              disabled={sendingTeacherMessage || loadingFacultyDirectory || facultyDirectory.length === 0}
+              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {sendingTeacherMessage ? "Sending..." : "Send Message to Teacher"}
+            </button>
+          </div>
+        </form>
+      </section>
+
       <section className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-12">
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-8 xl:h-[540px]">
+        <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-blue-50/25 p-5 shadow-sm ring-1 ring-blue-100/50 xl:col-span-8 xl:h-[540px]">
+          <div className="pointer-events-none absolute -right-12 -top-12 h-36 w-36 rounded-full bg-blue-200/20 blur-3xl" />
           <div className="flex h-full min-h-0 flex-col">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold text-slate-800">Contact Admin</h3>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-blue-700">Support</p>
+              <h3 className="mt-1 text-lg font-semibold text-slate-800">Contact Admin</h3>
               <p className="mt-1 text-sm text-slate-500">Raise a ticket and track admin response.</p>
             </div>
             <div className="flex items-center gap-2 text-xs">
-              <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-blue-700">
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
                 Open: {openCount}
               </span>
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
                 Closed: {resolvedCount}
               </span>
             </div>
@@ -247,7 +364,7 @@ function Queries() {
                 value={form.subject}
                 onChange={handleFormChange}
                 placeholder="Short summary of your issue"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 required
               />
             </div>
@@ -258,7 +375,7 @@ function Queries() {
                 name="category"
                 value={form.category}
                 onChange={handleFormChange}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               >
                 <option value="general">General</option>
                 <option value="academic">Academic</option>
@@ -273,7 +390,7 @@ function Queries() {
                 name="priority"
                 value={form.priority}
                 onChange={handleFormChange}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               >
                 <option value="low">Low Priority</option>
                 <option value="normal">Normal Priority</option>
@@ -289,32 +406,43 @@ function Queries() {
                 value={form.body}
                 onChange={handleFormChange}
                 placeholder="Describe your query clearly with relevant details."
-                className="h-28 w-full resize-none overflow-y-auto rounded-lg border border-slate-300 px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="h-28 w-full resize-none overflow-y-auto rounded-lg border border-slate-300 bg-white px-3 py-2.5 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 required
               />
             </div>
 
-            <div className="md:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-600">Screenshot (Optional)</label>
-              <input
-                id="query-attachment-input"
-                type="file"
-                accept="image/png,image/jpeg,image/jpg,image/webp"
-                onChange={handleFormChange}
-                className="hidden"
-              />
-              <label
-                htmlFor="query-attachment-input"
-                className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 hover:border-blue-400 hover:bg-blue-50"
-              >
-                <svg viewBox="0 0 24 24" className="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 3v12" />
-                  <path d="m7 10 5 5 5-5" />
-                  <rect x="4" y="18" width="16" height="3" rx="1.5" />
-                </svg>
-                <span>{form.attachment ? "Change screenshot" : "Upload screenshot"}</span>
-              </label>
-              <p className="mt-1 text-xs text-slate-500">PNG/JPG/WEBP up to 5MB</p>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="min-w-0 flex-1 md:max-w-[70%]">
+                  <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-600">Screenshot (Optional)</label>
+                  <input
+                    id="query-attachment-input"
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/webp"
+                    onChange={handleFormChange}
+                    className="hidden"
+                  />
+                  <label
+                    htmlFor="query-attachment-input"
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:border-blue-400 hover:bg-blue-50"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 3v12" />
+                      <path d="m7 10 5 5 5-5" />
+                      <rect x="4" y="18" width="16" height="3" rx="1.5" />
+                    </svg>
+                    <span className="truncate">{form.attachment ? "Change screenshot" : "Upload screenshot"}</span>
+                  </label>
+                  <p className="mt-1 text-xs text-slate-500">PNG/JPG/WEBP up to 5MB</p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="rounded-lg bg-blue-600 px-5 py-2.5 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {submitting ? "Submitting..." : "Submit Query"}
+                </button>
+              </div>
               {form.attachment && (
                 <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
                   <div className="flex items-center justify-between gap-3">
@@ -339,21 +467,12 @@ function Queries() {
                 </div>
               )}
             </div>
-
-            <div className="md:col-span-2 -mt-3 flex justify-end">
-              <button
-                type="submit"
-                disabled={submitting}
-                className="rounded-lg bg-blue-600 px-4 py-2.5 text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {submitting ? "Submitting..." : "Submit Query"}
-              </button>
-            </div>
           </form>
           </div>
         </div>
 
-        <aside className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-4 xl:h-[540px]">
+        <aside className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-indigo-50/20 p-5 shadow-sm ring-1 ring-slate-100/70 xl:col-span-4 xl:h-[540px]">
+          <div className="pointer-events-none absolute -left-10 -bottom-10 h-28 w-28 rounded-full bg-indigo-200/20 blur-2xl" />
           <div className="flex h-full min-h-0 flex-col">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -363,7 +482,7 @@ function Queries() {
               <button
                 type="button"
                 onClick={loadQueries}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
               >
                 Refresh
               </button>

@@ -51,11 +51,22 @@ function AdminDashboard({ onLogout }) {
   const [loadingLiveRoomStatus, setLoadingLiveRoomStatus] = useState(false);
   const [selectedLiveRoom, setSelectedLiveRoom] = useState(null);
   const [facultyApprovals, setFacultyApprovals] = useState({});
+  const [generatedUnassignedSlots, setGeneratedUnassignedSlots] = useState([]);
+  const [sendingConflictSuggestions, setSendingConflictSuggestions] = useState(false);
+  const [conflictSuggestionsSent, setConflictSuggestionsSent] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [roomRemovalDialog, setRoomRemovalDialog] = useState({
     isOpen: false,
     room: null,
     removing: false,
+  });
+  const [roomMaintenanceAssignments, setRoomMaintenanceAssignments] = useState({});
+  const [shiftingRoomAllocations, setShiftingRoomAllocations] = useState(false);
+  const [roomAssignmentFilters, setRoomAssignmentFilters] = useState({
+    search: "",
+    day: "all",
+    faculty: "all",
+    room: "all",
   });
   const [loadingRoomAvailability, setLoadingRoomAvailability] = useState(false);
   const [adminUserId, setAdminUserId] = useState(null);
@@ -149,6 +160,13 @@ function AdminDashboard({ onLogout }) {
     .join("");
 
   const getDraftStorageKey = (semester) => `${DRAFT_STORAGE_PREFIX}:${semester || "all"}`;
+  const annotateGeneratedSlots = (slots = []) =>
+    (Array.isArray(slots) ? slots : []).map((slot) => ({
+      ...slot,
+      original_day: slot.original_day || slot.day || "",
+      original_start_time: slot.original_start_time || slot.start_time || "",
+      original_end_time: slot.original_end_time || slot.end_time || "",
+    }));
 
   const loadDraftFromStorage = (semester) => {
     try {
@@ -283,7 +301,7 @@ function AdminDashboard({ onLogout }) {
       loadPublishedTimetableRows();
       const storedDraft = loadDraftFromStorage(semesterFilter);
       if (storedDraft && Array.isArray(storedDraft.slots) && storedDraft.slots.length > 0) {
-        setGeneratedTimetable(storedDraft.slots);
+        setGeneratedTimetable(annotateGeneratedSlots(storedDraft.slots));
         const restoredAssignments = {};
         const restoredApprovals = {};
         storedDraft.slots.forEach((slot, idx) => {
@@ -293,10 +311,12 @@ function AdminDashboard({ onLogout }) {
         setRoomAssignments(restoredAssignments);
         setFacultyApprovals(restoredApprovals);
         setTimetableMessage("Restored last generated draft for this semester.");
+        setGeneratedUnassignedSlots([]);
       } else {
         setGeneratedTimetable([]);
         setRoomAssignments({});
         setFacultyApprovals({});
+        setGeneratedUnassignedSlots([]);
       }
     }
     if (activePage === "calendar") loadCalendarEvents();
@@ -332,7 +352,7 @@ function AdminDashboard({ onLogout }) {
       loadPublishedTimetableRows();
       const storedDraft = loadDraftFromStorage(semesterFilter);
       if (storedDraft && Array.isArray(storedDraft.slots) && storedDraft.slots.length > 0) {
-        setGeneratedTimetable(storedDraft.slots);
+        setGeneratedTimetable(annotateGeneratedSlots(storedDraft.slots));
         const restoredAssignments = {};
         const restoredApprovals = {};
         storedDraft.slots.forEach((slot, idx) => {
@@ -345,6 +365,7 @@ function AdminDashboard({ onLogout }) {
         setGeneratedTimetable([]);
         setRoomAssignments({});
         setFacultyApprovals({});
+        setGeneratedUnassignedSlots([]);
       }
     }
   }, [semesterFilter]);
@@ -389,6 +410,14 @@ function AdminDashboard({ onLogout }) {
       loadSupportQueries();
     }
   }, [queryStatusFilter, querySenderRoleFilter, queryPriorityFilter]);
+
+  useEffect(() => {
+    if (activePage !== "users") return undefined;
+    const timer = setTimeout(() => {
+      loadUsers();
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [activePage, userRoleFilter, userSearch]);
 
   useEffect(() => {
     if (activePage === "grade-reviews") {
@@ -565,8 +594,11 @@ function AdminDashboard({ onLogout }) {
     setPreferencesError("");
     try {
       const res = await PreferenceService.generateTimetableForSemester(semesterFilter);
-      setGeneratedTimetable(res.timetable || []);
-      saveDraftToStorage(semesterFilter, res.timetable || []);
+      const annotatedRows = annotateGeneratedSlots(res.timetable || []);
+      setGeneratedTimetable(annotatedRows);
+      setGeneratedUnassignedSlots(Array.isArray(res.unassigned) ? res.unassigned : []);
+      setConflictSuggestionsSent(false);
+      saveDraftToStorage(semesterFilter, annotatedRows);
       const initialAssignments = {};
       (res.timetable || []).forEach((slot, idx) => {
         initialAssignments[`${slot.source_preference_id}-${idx}`] = slot.room;
@@ -591,6 +623,28 @@ function AdminDashboard({ onLogout }) {
       return null;
     } finally {
       setGeneratingTimetable(false);
+    }
+  };
+
+  const sendConflictSuggestionsToImpactedFaculty = async () => {
+    if (!Array.isArray(generatedUnassignedSlots) || generatedUnassignedSlots.length === 0) {
+      setPreferencesError("No unassigned slots available for suggestion notification.");
+      return;
+    }
+    setSendingConflictSuggestions(true);
+    setPreferencesError("");
+    try {
+      const res = await PreferenceService.notifyTimetableConflictSuggestions({
+        semester: semesterFilter,
+        unassigned: generatedUnassignedSlots,
+        assigned_slots: generatedTimetable,
+      });
+      setTimetableMessage(res?.message || "Conflict suggestions sent to impacted faculty.");
+      setConflictSuggestionsSent(true);
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to send conflict suggestions.");
+    } finally {
+      setSendingConflictSuggestions(false);
     }
   };
 
@@ -640,6 +694,9 @@ function AdminDashboard({ onLogout }) {
           source_preference_id: slot.source_preference_id,
           room: roomName,
           room_capacity: roomMeta?.capacity || slot.room_capacity,
+          day: slot.day,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
         };
       });
       const res = await PreferenceService.publishTimetable({
@@ -676,6 +733,9 @@ function AdminDashboard({ onLogout }) {
           source_preference_id: slot.source_preference_id,
           room: slot.room,
           room_capacity: roomMeta?.capacity || slot.room_capacity,
+          day: slot.day,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
         };
       });
       const res = await PreferenceService.publishTimetable({
@@ -723,10 +783,12 @@ function AdminDashboard({ onLogout }) {
 
   const openRoomRemovalDialog = (room) => {
     setRoomRemovalDialog({ isOpen: true, room, removing: false });
+    setRoomMaintenanceAssignments({});
   };
 
   const closeRoomRemovalDialog = () => {
     setRoomRemovalDialog({ isOpen: false, room: null, removing: false });
+    setRoomMaintenanceAssignments({});
   };
 
   const confirmRemoveRoom = async () => {
@@ -736,8 +798,64 @@ function AdminDashboard({ onLogout }) {
     setRoomRemovalDialog({ isOpen: false, room: null, removing: false });
   };
 
+  const assignMaintenanceShiftRoom = (slotId, roomName) => {
+    setRoomMaintenanceAssignments((prev) => ({
+      ...prev,
+      [String(slotId)]: roomName,
+    }));
+  };
+
+  const shiftRoomForMaintenance = async () => {
+    const currentRoom = roomRemovalDialog.room;
+    if (!currentRoom?.id || !currentRoom?.name) return;
+    const occupied = Array.isArray(roomOccupancy[currentRoom.name]) ? roomOccupancy[currentRoom.name] : [];
+    if (occupied.length === 0) {
+      setPreferencesError("No occupied timetable slots found for this room.");
+      return;
+    }
+    const replacements = occupied.map((slot) => ({
+      slot_id: slot.id,
+      new_room: roomMaintenanceAssignments[String(slot.id)] || "",
+    }));
+    const missing = replacements.some((row) => !row.new_room);
+    if (missing) {
+      setPreferencesError("Select replacement room for each occupied slot before shifting.");
+      return;
+    }
+
+    setShiftingRoomAllocations(true);
+    setPreferencesError("");
+    try {
+      const res = await PreferenceService.shiftRoomAllocationsForMaintenance(currentRoom.id, {
+        semester: semesterFilter,
+        replacements,
+        mark_inactive: true,
+      });
+      setTimetableMessage(res?.message || "Room allocations shifted successfully.");
+      await loadRooms();
+      await loadRoomOccupancy();
+      await loadRoomLiveStatus();
+      closeRoomRemovalDialog();
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to shift room allocations.");
+    } finally {
+      setShiftingRoomAllocations(false);
+    }
+  };
+
   const assignRoom = (slotKey, roomName) => {
     setRoomAssignments((prev) => ({ ...prev, [slotKey]: roomName }));
+  };
+
+  const updateGeneratedSlot = (index, field, value) => {
+    setGeneratedTimetable((prev) => {
+      const next = [...prev];
+      const row = next[index];
+      if (!row) return prev;
+      next[index] = { ...row, [field]: value };
+      saveDraftToStorage(semesterFilter, next);
+      return next;
+    });
   };
 
   const openLiveRoomModal = (room) => {
@@ -1107,6 +1225,45 @@ function AdminDashboard({ onLogout }) {
 
     return searchableFields.some((value) => value.includes(normalizedPreferenceSearch));
   });
+  const preferenceStatusOrder = { pending: 0, approved: 1, rejected: 2 };
+  const sortedFilteredPreferences = [...filteredPreferences].sort((a, b) => {
+    const aStatus = String(a?.status || "").toLowerCase();
+    const bStatus = String(b?.status || "").toLowerCase();
+    const aRank = Object.prototype.hasOwnProperty.call(preferenceStatusOrder, aStatus) ? preferenceStatusOrder[aStatus] : 99;
+    const bRank = Object.prototype.hasOwnProperty.call(preferenceStatusOrder, bStatus) ? preferenceStatusOrder[bStatus] : 99;
+    if (aRank !== bRank) return aRank - bRank;
+    const aTs = new Date(a?.created_at || 0).getTime();
+    const bTs = new Date(b?.created_at || 0).getTime();
+    return bTs - aTs;
+  });
+  const groupedPreferenceRows = sortedFilteredPreferences.reduce((acc, pref) => {
+    const key = [
+      pref?.faculty_id || pref?.faculty_email || pref?.faculty_name || "faculty",
+      pref?.subject || "-",
+      pref?.semester || "-",
+      pref?.department || "-",
+      pref?.year || "-",
+      pref?.section || "-",
+    ].join("::");
+    const existing = acc.find((row) => row.key === key);
+    if (existing) {
+      existing.preferences.push(pref);
+      return acc;
+    }
+    acc.push({
+      key,
+      faculty_name: pref?.faculty_name || "Faculty",
+      faculty_email: pref?.faculty_email || "",
+      subject: pref?.subject || "-",
+      semester: pref?.semester || "-",
+      department: pref?.department || "-",
+      year: pref?.year || "-",
+      section: pref?.section || "-",
+      student_count: pref?.student_count || "-",
+      preferences: [pref],
+    });
+    return acc;
+  }, []);
 
   const getActivityStyle = (item) => {
     const action = String(item?.action_type || "").toLowerCase();
@@ -1141,6 +1298,10 @@ function AdminDashboard({ onLogout }) {
       const kpis = overview?.kpis || {};
       const actionCenter = overview?.action_center || {};
       const timetableHealth = overview?.timetable_health || {};
+      const unassignedPreferenceCount = Math.max(
+        Number(timetableHealth.missing_assignments_count || 0),
+        Number(actionCenter.unassigned_slots_count || 0)
+      );
       const live = overview?.live_room_status || {};
       const facultyQueue = overview?.faculty_approval_queue || [];
       const announce = overview?.announcements_snapshot || { recent: [], audience_breakdown: {} };
@@ -1241,7 +1402,11 @@ function AdminDashboard({ onLogout }) {
                     </button>
                   </div>
                   <div className="mt-4 space-y-2 text-sm">
-                    <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+                    <button
+                      type="button"
+                      onClick={() => setActivePage("preferences")}
+                      className="flex w-full items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-left transition hover:bg-amber-100/80 dark:border-amber-800 dark:bg-amber-950/30 dark:hover:bg-amber-900/40"
+                    >
                       <div className="flex items-center gap-2">
                         <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
                         <span className="font-medium text-slate-800 dark:text-slate-100">Preferences awaiting approval</span>
@@ -1249,8 +1414,12 @@ function AdminDashboard({ onLogout }) {
                       <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-amber-700 dark:bg-slate-900 dark:text-amber-300">
                         {(actionCenter.preferences_awaiting_approval || []).length}
                       </span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePage("timetable")}
+                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:bg-slate-700/70"
+                    >
                       <div className="flex items-center gap-2">
                         <span className={`h-2.5 w-2.5 rounded-full ${actionCenter.timetable_published ? "bg-emerald-500" : "bg-amber-500"}`} />
                         <span className="font-medium text-slate-800 dark:text-slate-100">Timetable status</span>
@@ -1258,8 +1427,12 @@ function AdminDashboard({ onLogout }) {
                       <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${actionCenter.timetable_published ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
                         {actionCenter.timetable_published ? "Published" : "Not Published"}
                       </span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-800 dark:bg-rose-950/25">
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePage("conflicts")}
+                      className="flex w-full items-center justify-between rounded-lg border border-rose-200 bg-rose-50/60 p-3 text-left transition hover:bg-rose-100/70 dark:border-rose-800 dark:bg-rose-950/25 dark:hover:bg-rose-900/35"
+                    >
                       <div className="flex items-center gap-2">
                         <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
                         <span className="font-medium text-slate-800 dark:text-slate-100">Room conflicts needing resolution</span>
@@ -1267,8 +1440,12 @@ function AdminDashboard({ onLogout }) {
                       <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 dark:bg-slate-900 dark:text-rose-300">
                         {(actionCenter.room_conflicts || []).length}
                       </span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePage("timetable")}
+                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:bg-slate-700/70"
+                    >
                       <div className="flex items-center gap-2">
                         <span className="h-2.5 w-2.5 rounded-full bg-slate-500" />
                         <span className="font-medium text-slate-800 dark:text-slate-100">Unassigned slots (no room found)</span>
@@ -1276,7 +1453,7 @@ function AdminDashboard({ onLogout }) {
                       <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-900 dark:text-slate-200">
                         {actionCenter.unassigned_slots_count ?? 0}
                       </span>
-                    </div>
+                    </button>
                   </div>
                 </div>
 
@@ -1298,14 +1475,21 @@ function AdminDashboard({ onLogout }) {
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/70">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-300">Approved</p>
                       <p className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">{timetableHealth.approved_slots ?? 0}</p>
+                      <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Approved faculty slots ready for scheduling.</p>
                     </div>
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/70">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-300">Requested</p>
                       <p className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">{timetableHealth.total_requested_slots ?? 0}</p>
+                      <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Total approved preferences submitted by faculty.</p>
                     </div>
                     <div className="rounded-lg border border-slate-200 bg-red-50 px-3 py-2.5 sm:col-span-2 dark:border-red-800 dark:bg-red-950/30">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-red-600 dark:text-red-300">Missing Assignments</p>
-                      <p className="mt-1 text-xl font-bold text-red-700 dark:text-red-200">{timetableHealth.missing_assignments_count ?? 0}</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-red-600 dark:text-red-300">
+                        Unassigned Preferences (Needs Reallocation)
+                      </p>
+                      <p className="mt-1 text-2xl font-bold text-red-700 dark:text-red-200">{unassignedPreferenceCount}</p>
+                      <p className="mt-1 text-[11px] text-red-700/80 dark:text-red-200/80">
+                        Faculty preferences not assigned to a final timetable slot yet.
+                      </p>
                     </div>
                   </div>
 
@@ -1390,30 +1574,42 @@ function AdminDashboard({ onLogout }) {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-indigo-50/30 p-5 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
-                  <div className="flex items-center justify-between gap-3">
-                    <h4 className="text-base font-semibold text-slate-800 dark:text-slate-100">Announcements Snapshot</h4>
+                <div className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white via-indigo-50/40 to-cyan-50/30 p-5 shadow-sm ring-1 ring-indigo-100/40 dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/80 dark:ring-slate-700/60">
+                  <div className="pointer-events-none absolute -right-14 -top-14 h-32 w-32 rounded-full bg-indigo-300/20 blur-2xl dark:bg-indigo-500/10" />
+                  <div className="relative flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-indigo-600 dark:text-indigo-300">Communication</p>
+                      <h4 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">Announcements Snapshot</h4>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setActivePage("messages")}
-                      className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                      className="rounded-lg border border-indigo-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-50 dark:border-indigo-700 dark:bg-slate-900/70 dark:text-indigo-200 dark:hover:bg-indigo-950/40"
                     >
                       Send Message
                     </button>
                   </div>
-                  <p className="text-xs text-slate-600 mt-1 dark:text-slate-300">
-                    Faculty {announce.audience_breakdown?.faculty ?? 0} | Student {announce.audience_breakdown?.student ?? 0} | All {announce.audience_breakdown?.all ?? 0}
-                  </p>
-                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                  <div className="relative mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+                      Faculty {announce.audience_breakdown?.faculty ?? 0}
+                    </span>
+                    <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                      Student {announce.audience_breakdown?.student ?? 0}
+                    </span>
+                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 dark:border-violet-800 dark:bg-violet-900/30 dark:text-violet-300">
+                      All {announce.audience_breakdown?.all ?? 0}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2.5 max-h-52 overflow-y-auto pr-1">
                     {(announce.recent || []).length === 0 ? (
-                      <div className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                      <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 px-3 py-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-400">
                         No recent announcements.
                       </div>
                     ) : (
                       (announce.recent || []).slice(0, 5).map((msg) => (
-                        <div key={msg.id} className="rounded-lg border border-slate-200 p-2.5 text-sm dark:border-slate-700 dark:bg-slate-800/50">
-                          <p className="font-medium text-slate-800 dark:text-slate-100">{msg.subject}</p>
-                          <p className="text-xs text-slate-500 mt-1 dark:text-slate-400">{msg.recipient_role}</p>
+                        <div key={msg.id} className="rounded-xl border border-slate-200/90 bg-white/80 px-3.5 py-3 text-sm shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:bg-slate-800/55">
+                          <p className="font-semibold text-slate-800 dark:text-slate-100">{msg.subject}</p>
+                          <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">{msg.recipient_role}</p>
                         </div>
                       ))
                     )}
@@ -1616,116 +1812,29 @@ function AdminDashboard({ onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredPreferences.map((pref) => (
-                    <tr key={pref.id} className="border-t border-slate-200 align-top transition-colors hover:bg-slate-50/70 dark:border-slate-700 dark:hover:bg-slate-800/40">
-                      <td className="px-4 py-3">
-                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{pref.faculty_name || "Faculty"}</p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">{pref.faculty_email}</p>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                        {editingPreferenceId === pref.id ? (
-                          <input
-                            value={preferenceEditForm.subject || ""}
-                            onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, subject: e.target.value }))}
-                            className="w-[130px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                          />
-                        ) : (
-                          pref.subject || "-"
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                        {editingPreferenceId === pref.id ? (
-                          <input
-                            type="number"
-                            min="1"
-                            value={preferenceEditForm.student_count || ""}
-                            onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, student_count: e.target.value }))}
-                            className="w-[84px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                          />
-                        ) : (
-                          pref.student_count || "-"
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                        {editingPreferenceId === pref.id ? (
-                          <div className="w-[116px] space-y-1.5">
-                            <input
-                              value={preferenceEditForm.day || ""}
-                              onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, day: e.target.value }))}
-                              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                            />
-                            <input
-                              type="time"
-                              value={preferenceEditForm.start_time || ""}
-                              onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, start_time: e.target.value }))}
-                              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                            />
-                            <input
-                              type="time"
-                              value={preferenceEditForm.end_time || ""}
-                              onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, end_time: e.target.value }))}
-                              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                            />
-                          </div>
-                        ) : (
-                          `${pref.day} | ${pref.start_time} - ${pref.end_time}`
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                        {editingPreferenceId === pref.id ? (
-                          <input
-                            value={preferenceEditForm.semester || ""}
-                            onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, semester: e.target.value }))}
-                            className="w-[110px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                          />
-                        ) : (
-                          pref.semester
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                        {editingPreferenceId === pref.id ? (
-                          <div className="w-[80px] space-y-1.5">
-                            <input
-                              value={preferenceEditForm.department || ""}
-                              onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, department: e.target.value }))}
-                              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                              placeholder="Dept"
-                            />
-                            <input
-                              type="number"
-                              value={preferenceEditForm.year || ""}
-                              onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, year: e.target.value }))}
-                              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                              placeholder="Year"
-                            />
-                            <input
-                              value={preferenceEditForm.section || ""}
-                              onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, section: e.target.value }))}
-                              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                              placeholder="Sec"
-                            />
-                          </div>
-                        ) : (
-                          `${pref.department || "-"} / ${pref.year || "-"} / ${pref.section || "-"}`
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                        {editingPreferenceId === pref.id ? (
-                          <input
-                            value={preferenceEditForm.details || ""}
-                            onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, details: e.target.value }))}
-                            className="w-[150px] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
-                          />
-                        ) : (
-                          pref.details || "-"
-                        )}
-                      </td>
-                      <td className="w-[120px] px-4 py-3 align-top whitespace-nowrap">
-                        {editingPreferenceId === pref.id ? (
-                          <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
-                            editing in actions
-                          </span>
-                        ) : (
+                  {groupedPreferenceRows.map((group) =>
+                    group.preferences.map((pref, idx) => (
+                      <tr key={pref.id} className="border-t border-slate-200 align-top transition-colors hover:bg-slate-50/70 dark:border-slate-700 dark:hover:bg-slate-800/40">
+                        <td className="px-4 py-3">
+                          {idx === 0 ? (
+                            <>
+                              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{group.faculty_name}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{group.faculty_email}</p>
+                              <span className="mt-1 inline-flex rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                                {group.preferences.length} slot(s)
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-300">...</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{group.subject}</td>
+                        <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{pref.student_count || group.student_count || "-"}</td>
+                        <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{`${pref.day} | ${pref.start_time} - ${pref.end_time}`}</td>
+                        <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{group.semester}</td>
+                        <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{`${group.department || "-"} / ${group.year || "-"} / ${group.section || "-"}`}</td>
+                        <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{pref.details || "-"}</td>
+                        <td className="w-[120px] px-4 py-3 align-top whitespace-nowrap">
                           <span
                             className={`text-xs px-2.5 py-1 rounded-full border font-medium ${
                               pref.status === "approved"
@@ -1737,60 +1846,43 @@ function AdminDashboard({ onLogout }) {
                           >
                             {pref.status}
                           </span>
-                        )}
-                      </td>
-                      <td className="w-[130px] px-4 py-3 align-top">
-                        {editingPreferenceId === pref.id ? (
-                          <div className="w-[112px] space-y-2">
-                            <select
-                              value={preferenceEditForm.status || "pending"}
-                              onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, status: e.target.value }))}
-                              className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:focus:ring-blue-900/40"
-                            >
-                              <option value="pending">pending</option>
-                              <option value="approved">approved</option>
-                              <option value="rejected">rejected</option>
-                            </select>
-                            <div className="flex flex-col gap-1.5">
-                              <button onClick={savePreferenceEdit} className="px-2.5 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 shadow-sm">
-                                Save
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setEditingPreferenceId(null);
-                                  setPreferenceEditForm({});
-                                }}
-                                className="px-2.5 py-1.5 text-xs rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                        </td>
+                        <td className="w-[130px] px-4 py-3 align-top">
+                          {editingPreferenceId === pref.id ? (
+                            <div className="w-[112px] space-y-2">
+                              <select
+                                value={preferenceEditForm.status || "pending"}
+                                onChange={(e) => setPreferenceEditForm((prev) => ({ ...prev, status: e.target.value }))}
+                                className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm"
                               >
-                                Cancel
-                              </button>
+                                <option value="pending">pending</option>
+                                <option value="approved">approved</option>
+                                <option value="rejected">rejected</option>
+                              </select>
+                              <div className="flex flex-col gap-1.5">
+                                <button onClick={savePreferenceEdit} className="px-2.5 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 shadow-sm">Save</button>
+                                <button
+                                  onClick={() => {
+                                    setEditingPreferenceId(null);
+                                    setPreferenceEditForm({});
+                                  }}
+                                  className="px-2.5 py-1.5 text-xs rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="flex gap-2 flex-wrap">
-                            <button
-                              onClick={() => updateStatus(pref.id, "approved")}
-                              className="px-3 py-1.5 text-xs rounded-md bg-green-600 text-white hover:bg-green-700 shadow-sm"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => updateStatus(pref.id, "rejected")}
-                              className="px-3 py-1.5 text-xs rounded-md bg-red-600 text-white hover:bg-red-700 shadow-sm"
-                            >
-                              Reject
-                            </button>
-                            <button
-                              onClick={() => startPreferenceEdit(pref)}
-                              className="px-3 py-1.5 text-xs rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/35 dark:text-amber-300 dark:hover:bg-amber-900/50"
-                            >
-                              Edit
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                          ) : (
+                            <div className="flex gap-2 flex-wrap">
+                              <button onClick={() => updateStatus(pref.id, "approved")} className="px-3 py-1.5 text-xs rounded-md bg-green-600 text-white hover:bg-green-700 shadow-sm">Approve</button>
+                              <button onClick={() => updateStatus(pref.id, "rejected")} className="px-3 py-1.5 text-xs rounded-md bg-red-600 text-white hover:bg-red-700 shadow-sm">Reject</button>
+                              <button onClick={() => startPreferenceEdit(pref)} className="px-3 py-1.5 text-xs rounded-md bg-amber-100 text-amber-700 hover:bg-amber-200">Edit</button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
               </div>
@@ -1801,9 +1893,31 @@ function AdminDashboard({ onLogout }) {
     }
 
     if (activePage === "timetable") {
+      const assignmentRows = generatedTimetable.map((slot, idx) => ({ slot, idx }));
+      const assignmentDayOptions = Array.from(new Set(generatedTimetable.map((slot) => slot.day).filter(Boolean)));
+      const assignmentFacultyOptions = Array.from(
+        new Set(generatedTimetable.map((slot) => slot.faculty_name).filter(Boolean))
+      );
+      const assignmentRoomOptions = Array.from(new Set(rooms.map((room) => room.name).filter(Boolean)));
+      const filteredAssignmentRows = assignmentRows.filter(({ slot }) => {
+        const assignedRoom = slot.room || "";
+        const query = roomAssignmentFilters.search.trim().toLowerCase();
+        const matchesSearch =
+          !query ||
+          [slot.subject, slot.faculty_name, slot.day, slot.start_time, slot.end_time, assignedRoom]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(query);
+        const matchesDay = roomAssignmentFilters.day === "all" || slot.day === roomAssignmentFilters.day;
+        const matchesFaculty =
+          roomAssignmentFilters.faculty === "all" || slot.faculty_name === roomAssignmentFilters.faculty;
+        const matchesRoom = roomAssignmentFilters.room === "all" || assignedRoom === roomAssignmentFilters.room;
+        return matchesSearch && matchesDay && matchesFaculty && matchesRoom;
+      });
       return (
         <div className="space-y-5">
-          <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50/35 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
+          <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-cyan-50/35 p-6 shadow-sm ring-1 ring-cyan-100/50 dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70 dark:ring-slate-800/70">
             <div className="pointer-events-none absolute -right-12 -top-12 h-36 w-36 rounded-full bg-cyan-200/35 blur-3xl dark:bg-cyan-700/20" />
             <div className="relative">
             <h4 className="text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">Collected Teacher Preferences</h4>
@@ -1920,7 +2034,7 @@ function AdminDashboard({ onLogout }) {
             </div>
           </div>
 
-          <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-emerald-50/30 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
+          <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-emerald-50/30 p-6 shadow-sm ring-1 ring-emerald-100/50 dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70 dark:ring-slate-800/70">
             <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-emerald-200/30 blur-3xl dark:bg-emerald-700/15" />
             <div className="relative">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1990,14 +2104,39 @@ function AdminDashboard({ onLogout }) {
                         Approve each faculty timetable draft before final publish.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={approveAllFaculties}
-                      className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
-                    >
-                      Approve All Faculties
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={sendConflictSuggestionsToImpactedFaculty}
+                        disabled={sendingConflictSuggestions || generatedUnassignedSlots.length === 0}
+                        className={`rounded-lg px-3 py-2 text-xs font-medium ${
+                          sendingConflictSuggestions || generatedUnassignedSlots.length === 0
+                            ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                            : conflictSuggestionsSent
+                              ? "bg-emerald-600 text-white ring-2 ring-emerald-200 hover:bg-emerald-700"
+                              : "bg-amber-600 text-white hover:bg-amber-700"
+                        }`}
+                      >
+                        {sendingConflictSuggestions
+                          ? "Sending..."
+                          : conflictSuggestionsSent
+                            ? "Suggestions Sent Successfully"
+                            : "Send Suggestions to Impacted Faculty"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={approveAllFaculties}
+                        className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
+                      >
+                        Approve All Faculties
+                      </button>
+                    </div>
                   </div>
+                  {generatedUnassignedSlots.length > 0 && (
+                    <p className="mt-2 text-xs font-medium text-amber-700">
+                      {generatedUnassignedSlots.length} slot(s) are unassigned. Send professional suggestions to impacted faculty.
+                    </p>
+                  )}
                   <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                     {facultyDraftRows.map((row) => {
                       const key = String(row.faculty_id || "unknown");
@@ -2051,11 +2190,42 @@ function AdminDashboard({ onLogout }) {
                         const key = `${slot.source_preference_id}-${idx}`;
                         return (
                           <tr key={key} className="border-t border-slate-200">
-                            <td className="px-4 py-3 text-sm text-slate-700">{slot.day}</td>
+                            <td className="px-4 py-3 text-sm text-slate-700">
+                              <select
+                                value={slot.day || ""}
+                                onChange={(e) => updateGeneratedSlot(idx, "day", e.target.value)}
+                                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                              >
+                                {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
+                                  <option key={day} value={day}>{day}</option>
+                                ))}
+                              </select>
+                            </td>
                             <td className="px-4 py-3 text-sm text-slate-700">{slot.subject}</td>
                             <td className="px-4 py-3 text-sm text-slate-700">{slot.faculty_name}</td>
                             <td className="px-4 py-3 text-sm text-slate-700">
-                              {slot.start_time} - {slot.end_time}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="time"
+                                  value={slot.start_time || ""}
+                                  onChange={(e) => updateGeneratedSlot(idx, "start_time", e.target.value)}
+                                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                                <span>-</span>
+                                <input
+                                  type="time"
+                                  value={slot.end_time || ""}
+                                  onChange={(e) => updateGeneratedSlot(idx, "end_time", e.target.value)}
+                                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </div>
+                              {(slot.day !== slot.original_day ||
+                                slot.start_time !== slot.original_start_time ||
+                                slot.end_time !== slot.original_end_time) && (
+                                <p className="mt-1 text-xs font-semibold text-amber-700">
+                                  Changed from {slot.original_day} {slot.original_start_time}-{slot.original_end_time}
+                                </p>
+                              )}
                             </td>
                             <td className="px-4 py-3 text-sm text-slate-700">{slot.student_count || "-"}</td>
                             <td className="px-4 py-3 text-sm text-slate-700">
@@ -2092,23 +2262,54 @@ function AdminDashboard({ onLogout }) {
 
     if (activePage === "rooms") {
       const derivedRoomLive = deriveRoomStatusFromGeneratedTimetable();
+      const assignmentRows = generatedTimetable.map((slot, idx) => ({ slot, idx }));
+      const assignmentDayOptions = Array.from(new Set(generatedTimetable.map((slot) => slot.day).filter(Boolean)));
+      const assignmentFacultyOptions = Array.from(
+        new Set(generatedTimetable.map((slot) => slot.faculty_name).filter(Boolean))
+      );
+      const assignmentRoomOptions = Array.from(new Set(rooms.map((room) => room.name).filter(Boolean)));
+      const filteredAssignmentRows = assignmentRows.filter(({ slot }) => {
+        const assignedRoom = slot.room || "";
+        const query = roomAssignmentFilters.search.trim().toLowerCase();
+        const matchesSearch =
+          !query ||
+          [slot.subject, slot.faculty_name, slot.day, slot.start_time, slot.end_time, assignedRoom]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(query);
+        const matchesDay = roomAssignmentFilters.day === "all" || slot.day === roomAssignmentFilters.day;
+        const matchesFaculty =
+          roomAssignmentFilters.faculty === "all" || slot.faculty_name === roomAssignmentFilters.faculty;
+        const matchesRoom = roomAssignmentFilters.room === "all" || assignedRoom === roomAssignmentFilters.room;
+        return matchesSearch && matchesDay && matchesFaculty && matchesRoom;
+      });
       return (
         <div className="space-y-4">
           <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50/35 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
             <div className="pointer-events-none absolute -right-14 -top-14 h-40 w-40 rounded-full bg-cyan-200/35 blur-3xl dark:bg-cyan-700/20" />
             <div className="pointer-events-none absolute -left-10 -bottom-14 h-36 w-36 rounded-full bg-blue-200/25 blur-3xl dark:bg-blue-700/15" />
             <div className="relative">
-            <h3 className="text-xl font-semibold tracking-tight text-slate-800 dark:text-slate-100">Rooms Management</h3>
-            <p className="text-sm text-slate-500 mt-2 dark:text-slate-400">
-              Manage room capacities and monitor live occupancy by timetable slot.
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-700 dark:text-cyan-300">Infrastructure Desk</p>
+                <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-800 dark:text-slate-100">Rooms Management</h3>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                  Manage room capacities and monitor live occupancy by timetable slot.
+                </p>
+              </div>
+              <div className="rounded-xl border border-cyan-200 bg-white/80 px-3 py-2 text-right shadow-sm dark:border-cyan-800 dark:bg-slate-900/70">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-cyan-700 dark:text-cyan-300">Registered Rooms</p>
+                <p className="mt-1 text-xl font-bold text-cyan-700 dark:text-cyan-300">{rooms.length}</p>
+              </div>
+            </div>
             <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
               <input
                 name="name"
                 value={newRoom.name}
                 onChange={handleRoomInput}
                 placeholder="Room name (e.g. D-401)"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
+                className="rounded-lg border border-cyan-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-cyan-900/40"
               />
               <input
                 name="capacity"
@@ -2117,11 +2318,11 @@ function AdminDashboard({ onLogout }) {
                 value={newRoom.capacity}
                 onChange={handleRoomInput}
                 placeholder="Capacity"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-blue-900/40"
+                className="rounded-lg border border-cyan-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-cyan-900/40"
               />
               <button
                 onClick={addRoom}
-                className="rounded-lg bg-blue-600 px-4 py-2.5 text-white shadow-sm hover:bg-blue-700"
+                className="rounded-lg bg-cyan-600 px-4 py-2.5 text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-cyan-700"
               >
                 Add Room
               </button>
@@ -2132,14 +2333,14 @@ function AdminDashboard({ onLogout }) {
               ) : rooms.map((room) => (
                 <div
                   key={room.id || room.name}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 py-2 shadow-sm dark:border-slate-700 dark:bg-slate-800/70"
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 py-2 shadow-sm transition hover:-translate-y-0.5 hover:shadow dark:border-slate-700 dark:bg-slate-800/70"
                 >
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
                     {room.name} ({room.capacity})
                   </span>
                   <button
                     onClick={() => openRoomRemovalDialog(room)}
-                    className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-100 dark:bg-red-900/25 dark:text-red-300 dark:hover:bg-red-900/40"
+                    className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-900/25 dark:text-rose-300 dark:hover:bg-rose-900/40"
                   >
                     Remove
                   </button>
@@ -2191,6 +2392,25 @@ function AdminDashboard({ onLogout }) {
                           <p className="text-xs text-slate-500 dark:text-slate-400">
                             {slot.department || "-"} / {slot.year || "-"} / {slot.section || "-"} | {slot.semester || "-"}
                           </p>
+                          <div className="mt-2">
+                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">
+                              Shift To Room
+                            </label>
+                            <select
+                              value={roomMaintenanceAssignments[String(slot.id)] || ""}
+                              onChange={(e) => assignMaintenanceShiftRoom(slot.id, e.target.value)}
+                              className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                            >
+                              <option value="">Select replacement room</option>
+                              {(rooms || [])
+                                .filter((room) => room.name !== roomRemovalDialog.room?.name && room.capacity >= (slot.student_count || 0))
+                                .map((room) => (
+                                  <option key={`${slot.id}-${room.name}`} value={room.name}>
+                                    {room.name} ({room.capacity})
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2206,6 +2426,24 @@ function AdminDashboard({ onLogout }) {
                 </div>
 
                 <div className="mt-4 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={shiftRoomForMaintenance}
+                    disabled={
+                      shiftingRoomAllocations ||
+                      !Array.isArray(roomOccupancy[roomRemovalDialog.room?.name]) ||
+                      roomOccupancy[roomRemovalDialog.room?.name].length === 0
+                    }
+                    className={`rounded-lg px-3 py-2 text-sm font-medium text-white ${
+                      shiftingRoomAllocations ||
+                      !Array.isArray(roomOccupancy[roomRemovalDialog.room?.name]) ||
+                      roomOccupancy[roomRemovalDialog.room?.name].length === 0
+                        ? "cursor-not-allowed bg-blue-300"
+                        : "bg-blue-600 hover:bg-blue-700"
+                    }`}
+                  >
+                    {shiftingRoomAllocations ? "Shifting..." : "Reassign Slots And Mark Maintenance"}
+                  </button>
                   <button
                     type="button"
                     onClick={closeRoomRemovalDialog}
@@ -2230,19 +2468,24 @@ function AdminDashboard({ onLogout }) {
             </div>
           )}
 
-          <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-emerald-50/35 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
+          <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-emerald-50/35 p-6 shadow-sm ring-1 ring-emerald-100/50 dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70 dark:ring-slate-800/80">
             <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-emerald-200/30 blur-3xl dark:bg-emerald-700/15" />
             <div className="relative">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h4 className="text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">Check Vacant Rooms By Time</h4>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-emerald-700 dark:text-emerald-300">Availability Scanner</p>
+                <h4 className="mt-1 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">Check Vacant Rooms By Time</h4>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                   Filter by day, timing, and semester to identify available classrooms.
                 </p>
               </div>
+              <div className="rounded-xl border border-emerald-200 bg-white/80 px-3 py-2 text-right shadow-sm dark:border-emerald-800 dark:bg-slate-900/70">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-emerald-700 dark:text-emerald-300">Latest Results</p>
+                <p className="mt-1 text-base font-bold text-emerald-700 dark:text-emerald-300">{roomAvailability.length}</p>
+              </div>
             </div>
 
-            <div className="mt-4 rounded-xl border border-slate-200 bg-white/80 p-3 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/40">
+            <div className="mt-4 rounded-xl border border-emerald-200/80 bg-white/85 p-3 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-800/45">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">
@@ -2251,7 +2494,7 @@ function AdminDashboard({ onLogout }) {
                   <select
                     value={roomFilter.day}
                     onChange={(e) => setRoomFilter((prev) => ({ ...prev, day: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
+                    className="w-full rounded-lg border border-emerald-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
                   >
                     {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
                       <option key={day} value={day}>
@@ -2268,7 +2511,7 @@ function AdminDashboard({ onLogout }) {
                     type="time"
                     value={roomFilter.start_time}
                     onChange={(e) => setRoomFilter((prev) => ({ ...prev, start_time: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
+                    className="w-full rounded-lg border border-emerald-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
                   />
                 </div>
                 <div>
@@ -2279,7 +2522,7 @@ function AdminDashboard({ onLogout }) {
                     type="time"
                     value={roomFilter.end_time}
                     onChange={(e) => setRoomFilter((prev) => ({ ...prev, end_time: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
+                    className="w-full rounded-lg border border-emerald-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
                   />
                 </div>
                 <div>
@@ -2289,7 +2532,7 @@ function AdminDashboard({ onLogout }) {
                   <select
                     value={semesterFilter}
                     onChange={(e) => setSemesterFilter(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
+                    className="w-full rounded-lg border border-emerald-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/30"
                   >
                     {semesterOptions.map((option) => (
                       <option key={option} value={option}>
@@ -2301,7 +2544,7 @@ function AdminDashboard({ onLogout }) {
                 <div className="flex items-end">
                   <button
                     onClick={checkRoomAvailability}
-                    className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white shadow-sm hover:bg-emerald-700"
+                    className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-emerald-700"
                   >
                     {loadingRoomAvailability ? "Checking..." : "Check Availability"}
                   </button>
@@ -2340,16 +2583,20 @@ function AdminDashboard({ onLogout }) {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-cyan-50/25 p-6 shadow-sm ring-1 ring-slate-100/70 dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/75 dark:ring-slate-800/80">
+            <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-cyan-200/25 blur-3xl dark:bg-cyan-700/10" />
+            <div className="pointer-events-none absolute -left-8 bottom-0 h-24 w-24 rounded-full bg-slate-200/30 blur-2xl dark:bg-slate-700/20" />
+            <div className="relative">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h4 className="text-base font-semibold text-slate-800">Real-Time Room Status</h4>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-700 dark:text-cyan-300">Live Monitoring</p>
+                <h4 className="mt-1 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Real-Time Room Status</h4>
                 <p className="text-xs text-slate-500 mt-1">
                   {derivedRoomLive.day || "-"} at {derivedRoomLive.current_time || "--:--"} | Running now:{" "}
                   {derivedRoomLive.running_classes_count}
                   {derivedRoomLive.next_slot_time ? ` | Next slot: ${derivedRoomLive.next_slot_time}` : ""}
                 </p>
-                <p className="text-[11px] text-slate-500 mt-1">
+                <p className="mt-2 inline-flex rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[11px] font-semibold text-cyan-700 dark:border-cyan-800 dark:bg-cyan-900/25 dark:text-cyan-300">
                   Generated timetable mapped rooms: {derivedRoomLive.mapped_entries}
                 </p>
               </div>
@@ -2358,7 +2605,7 @@ function AdminDashboard({ onLogout }) {
                 onClick={() => {
                   loadRoomLiveStatus();
                 }}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                className="rounded-lg border border-slate-300 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 Refresh Live
               </button>
@@ -2372,18 +2619,22 @@ function AdminDashboard({ onLogout }) {
                 derivedRoomLive.rooms.map((room) => (
                   <div
                     key={room.room}
-                    className={`group relative cursor-pointer rounded-lg border p-3 transition-all hover:-translate-y-0.5 hover:shadow-md ${
-                      room.status === "running" ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"
+                    className={`group relative cursor-pointer rounded-xl border p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-md ${
+                      room.status === "running"
+                        ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-teal-50/90 dark:border-emerald-800 dark:from-emerald-950/40 dark:to-teal-900/30"
+                        : "border-slate-200 bg-gradient-to-br from-white to-slate-50/85 dark:border-slate-700 dark:from-slate-900/75 dark:to-slate-800/65"
                     }`}
                     onClick={() => openLiveRoomModal(room)}
                   >
                     <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold text-slate-800">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                         {room.room} {room.capacity ? `(${room.capacity})` : ""}
                       </p>
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                          room.status === "running" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                          room.status === "running"
+                            ? "border border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/35 dark:text-emerald-300"
+                            : "border border-slate-300 bg-slate-200 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                         }`}
                       >
                         {room.status === "running" ? "Running" : "Idle"}
@@ -2408,8 +2659,8 @@ function AdminDashboard({ onLogout }) {
                       <p className="mt-2 text-xs text-slate-500">No more classes today.</p>
                     )}
 
-                    <div className="pointer-events-none absolute left-1/2 top-0 z-30 w-72 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-700 opacity-0 shadow-xl transition-all duration-150 group-hover:opacity-100 group-hover:-translate-y-[calc(100%+16px)] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-                      <div className="absolute left-1/2 top-full h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900" />
+                    <div className="pointer-events-none absolute left-1/2 top-0 z-30 w-72 -translate-x-1/2 -translate-y-[calc(100%+12px)] rounded-xl border border-slate-200 bg-white/95 px-3 py-2.5 text-xs text-slate-700 opacity-0 shadow-xl backdrop-blur-sm transition-all duration-150 group-hover:opacity-100 group-hover:-translate-y-[calc(100%+16px)] dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200">
+                      <div className="absolute left-1/2 top-full h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-slate-200 bg-white/95 dark:border-slate-700 dark:bg-slate-900/95" />
                       <p className="font-semibold text-slate-800 dark:text-slate-100">Quick Room Snapshot</p>
                       {room.running_class ? (
                         <p className="mt-1 leading-5">
@@ -2429,6 +2680,7 @@ function AdminDashboard({ onLogout }) {
                   </div>
                 ))
               )}
+            </div>
             </div>
           </div>
 
@@ -2508,10 +2760,119 @@ function AdminDashboard({ onLogout }) {
           <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-indigo-50/30 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
             <div className="pointer-events-none absolute -right-12 -top-10 h-40 w-40 rounded-full bg-indigo-200/25 blur-3xl dark:bg-indigo-700/15" />
             <div className="relative">
-            <h4 className="text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">Assign Rooms to Timetable</h4>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Allocate available rooms to each generated slot before publishing.
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-indigo-700 dark:text-indigo-300">Room Allocation</p>
+                <h4 className="mt-1 text-lg font-semibold tracking-tight text-slate-800 dark:text-slate-100">Assign Rooms to Timetable</h4>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Allocate available rooms to each generated slot before publishing.
+                </p>
+              </div>
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 px-3 py-2 text-right shadow-sm dark:border-indigo-800 dark:bg-indigo-900/20">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-indigo-700 dark:text-indigo-300">Generated Slots</p>
+                <p className="mt-1 text-lg font-bold text-indigo-700 dark:text-indigo-300">{generatedTimetable.length}</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-indigo-200/80 bg-white/80 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/65">
+              <div className="flex flex-wrap items-end gap-2.5">
+                <div className="min-w-56 flex-1">
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">
+                    Search
+                  </label>
+                  <input
+                    value={roomAssignmentFilters.search}
+                    onChange={(e) =>
+                      setRoomAssignmentFilters((prev) => ({
+                        ...prev,
+                        search: e.target.value,
+                      }))
+                    }
+                    placeholder="Subject, faculty, time..."
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-900/40"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">
+                    Day
+                  </label>
+                  <select
+                    value={roomAssignmentFilters.day}
+                    onChange={(e) =>
+                      setRoomAssignmentFilters((prev) => ({
+                        ...prev,
+                        day: e.target.value,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-900/40"
+                  >
+                    <option value="all">All Days</option>
+                    {assignmentDayOptions.map((day) => (
+                      <option key={day} value={day}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">
+                    Faculty
+                  </label>
+                  <select
+                    value={roomAssignmentFilters.faculty}
+                    onChange={(e) =>
+                      setRoomAssignmentFilters((prev) => ({
+                        ...prev,
+                        faculty: e.target.value,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-900/40"
+                  >
+                    <option value="all">All Faculty</option>
+                    {assignmentFacultyOptions.map((faculty) => (
+                      <option key={faculty} value={faculty}>
+                        {faculty}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">
+                    Room
+                  </label>
+                  <select
+                    value={roomAssignmentFilters.room}
+                    onChange={(e) =>
+                      setRoomAssignmentFilters((prev) => ({
+                        ...prev,
+                        room: e.target.value,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-900/40"
+                  >
+                    <option value="all">All Rooms</option>
+                    {assignmentRoomOptions.map((roomName) => (
+                      <option key={roomName} value={roomName}>
+                        {roomName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRoomAssignmentFilters({
+                      search: "",
+                      day: "all",
+                      faculty: "all",
+                      room: "all",
+                    })
+                  }
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
             {generatedTimetable.length === 0 ? (
               <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-white/70 p-4 dark:border-slate-700 dark:bg-slate-800/40">
                 <div className="flex items-start gap-3">
@@ -2530,9 +2891,10 @@ function AdminDashboard({ onLogout }) {
                 </div>
               </div>
             ) : (
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full border border-slate-200 rounded-lg overflow-hidden dark:border-slate-700">
-                  <thead className="bg-slate-50 dark:bg-slate-800/80">
+              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200/90 bg-white/90 shadow-sm ring-1 ring-slate-100/60 dark:border-slate-700 dark:bg-slate-900/55 dark:ring-slate-800/70">
+                <div className="max-h-[28rem] overflow-auto">
+                <table className="min-w-full">
+                  <thead className="sticky top-0 z-10 bg-gradient-to-r from-slate-50 to-indigo-50/60 dark:from-slate-800 dark:to-slate-800">
                     <tr>
                       <th className="text-left text-[11px] uppercase tracking-[0.08em] font-semibold text-slate-600 px-4 py-3 dark:text-slate-300">Subject</th>
                       <th className="text-left text-[11px] uppercase tracking-[0.08em] font-semibold text-slate-600 px-4 py-3 dark:text-slate-300">Faculty</th>
@@ -2542,21 +2904,26 @@ function AdminDashboard({ onLogout }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {generatedTimetable.map((slot, idx) => {
+                    {filteredAssignmentRows.map(({ slot, idx }) => {
                       const key = `${slot.source_preference_id}-${idx}`;
                       return (
-                        <tr key={key} className="border-t border-slate-200 hover:bg-slate-50/70 dark:border-slate-700 dark:hover:bg-slate-800/40">
-                          <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{slot.subject}</td>
+                        <tr key={key} className="border-t border-slate-200 transition hover:bg-indigo-50/40 dark:border-slate-700 dark:hover:bg-slate-800/45">
+                          <td className="px-4 py-3 text-sm font-medium text-slate-800 dark:text-slate-100">{slot.subject}</td>
                           <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{slot.faculty_name}</td>
-                          <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">{slot.student_count || "-"}</td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                              {slot.student_count || "-"}
+                            </span>
+                          </td>
                           <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-                            {slot.day} | {slot.start_time} - {slot.end_time}
+                            <span className="font-medium text-slate-800 dark:text-slate-100">{slot.day}</span>
+                            <span className="text-slate-500 dark:text-slate-400"> | {slot.start_time} - {slot.end_time}</span>
                           </td>
                           <td className="px-4 py-3">
                             <select
                               value={roomAssignments[key] || slot.room}
                               onChange={(e) => assignRoom(key, e.target.value)}
-                              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-900/40"
+                              className="min-w-44 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm transition focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-900/40"
                             >
                               {rooms.map((room) => (
                                 <option key={room.name} value={room.name}>
@@ -2568,8 +2935,16 @@ function AdminDashboard({ onLogout }) {
                         </tr>
                       );
                     })}
+                    {filteredAssignmentRows.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                          No timetable rows match the selected filters.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
             </div>
@@ -2579,6 +2954,13 @@ function AdminDashboard({ onLogout }) {
     }
 
     if (activePage === "messages") {
+      const announcementHistory = (adminMessages || []).filter((msg) => {
+        const subject = String(msg?.subject || "").toLowerCase();
+        if (subject.includes("system conflict alert")) return false;
+        if (subject.includes("timetable conflict alert")) return false;
+        if (subject.includes("timetable slot updated")) return false;
+        return true;
+      });
       return (
         <div className="space-y-4">
           <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50/40 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
@@ -2586,10 +2968,10 @@ function AdminDashboard({ onLogout }) {
             <div className="relative">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-700 dark:text-cyan-300">Broadcast Center</p>
-                  <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Admin Messages</h3>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-700 dark:text-cyan-300">Announcement Broadcast</p>
+                  <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Admin Announcements</h3>
                   <p className="mt-2 max-w-2xl text-sm text-slate-600 dark:text-slate-300">
-                    Send announcements to faculty, students, or both groups who have registered accounts.
+                    Publish official announcements only. These are reflected in user Announcement sections.
                   </p>
                 </div>
                 <div className="rounded-xl border border-cyan-200 bg-white/80 px-3 py-2 text-right shadow-sm dark:border-cyan-800 dark:bg-slate-900/70">
@@ -2638,12 +3020,12 @@ function AdminDashboard({ onLogout }) {
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Announcements are delivered instantly to selected recipients.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Only announcement communication is published from this panel.</p>
                   <button
                     type="submit"
                     className="inline-flex items-center rounded-lg bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-200 dark:focus:ring-cyan-900/40"
                   >
-                    Send Message
+                    Publish Announcement
                   </button>
                 </div>
               </form>
@@ -2666,8 +3048,8 @@ function AdminDashboard({ onLogout }) {
             <div className="relative flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-blue-700 dark:text-blue-300">Archive</p>
-                <h4 className="mt-1 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Sent Message History</h4>
-                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Review recent announcements and audience targeting.</p>
+                <h4 className="mt-1 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Announcement History</h4>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Only published announcements are shown here.</p>
               </div>
               <div className="w-full sm:w-auto">
                 <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Filter Audience</label>
@@ -2686,11 +3068,11 @@ function AdminDashboard({ onLogout }) {
 
             {loadingAdminMessages ? (
               <p className="text-sm text-slate-500 mt-4">Loading messages...</p>
-            ) : adminMessages.length === 0 ? (
+            ) : announcementHistory.length === 0 ? (
               <p className="text-sm text-slate-500 mt-4">No messages sent yet.</p>
             ) : (
               <div className="mt-5 space-y-3">
-                {adminMessages.map((msg) => (
+                {announcementHistory.map((msg) => (
                   <div key={msg.id} className="rounded-xl border border-slate-200 bg-white/85 p-4 shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900/55">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
@@ -2725,47 +3107,58 @@ function AdminDashboard({ onLogout }) {
             <div className="relative flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-emerald-700 dark:text-emerald-300">Support Desk</p>
-                <h4 className="mt-1 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Incoming User Queries</h4>
-                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Track, prioritize, and resolve support conversations from students and faculty.</p>
+                <h4 className="mt-1 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Query Response Desk</h4>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Review and reply to queries raised by students and teachers.</p>
               </div>
-              <div className="flex w-full flex-wrap items-end gap-2 lg:w-auto">
-                <select
-                  value={queryStatusFilter}
-                  onChange={(e) => setQueryStatusFilter(e.target.value)}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/40"
-                >
-                  <option value="">All status</option>
-                  <option value="open">Open</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="resolved">Resolved</option>
-                  <option value="closed">Closed</option>
-                </select>
-                <select
-                  value={querySenderRoleFilter}
-                  onChange={(e) => setQuerySenderRoleFilter(e.target.value)}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/40"
-                >
-                  <option value="">All senders</option>
-                  <option value="student">Student</option>
-                  <option value="faculty">Faculty</option>
-                </select>
-                <select
-                  value={queryPriorityFilter}
-                  onChange={(e) => setQueryPriorityFilter(e.target.value)}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/40"
-                >
-                  <option value="">All priority</option>
-                  <option value="high">High</option>
-                  <option value="normal">Normal</option>
-                  <option value="low">Low</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={loadSupportQueries}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                >
-                  Refresh
-                </button>
+              <div className="w-full rounded-xl border border-emerald-200/80 bg-white/80 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/65 lg:w-auto">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Status</label>
+                    <select
+                      value={queryStatusFilter}
+                      onChange={(e) => setQueryStatusFilter(e.target.value)}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/40"
+                    >
+                      <option value="">All status</option>
+                      <option value="open">Open</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="resolved">Resolved</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Sender</label>
+                    <select
+                      value={querySenderRoleFilter}
+                      onChange={(e) => setQuerySenderRoleFilter(e.target.value)}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/40"
+                    >
+                      <option value="">All senders</option>
+                      <option value="student">Student</option>
+                      <option value="faculty">Faculty</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Priority</label>
+                    <select
+                      value={queryPriorityFilter}
+                      onChange={(e) => setQueryPriorityFilter(e.target.value)}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-emerald-900/40"
+                    >
+                      <option value="">All priority</option>
+                      <option value="high">High</option>
+                      <option value="normal">Normal</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadSupportQueries}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    Refresh
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2776,7 +3169,7 @@ function AdminDashboard({ onLogout }) {
             ) : (
               <div className="mt-5 space-y-3">
                 {supportQueries.map((query) => (
-                  <div key={query.id} className="rounded-xl border border-slate-200 bg-white/85 p-4 shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900/55">
+                  <div key={query.id} className="rounded-xl border border-slate-200/90 bg-gradient-to-br from-white to-slate-50/75 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:from-slate-900/70 dark:to-slate-800/60">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-base font-semibold text-slate-900 dark:text-slate-100">{query.subject}</p>
                       <span className={`text-xs rounded-full px-2.5 py-1 font-semibold border ${
@@ -2791,7 +3184,7 @@ function AdminDashboard({ onLogout }) {
                         {query.status.replace("_", " ")}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-1 dark:text-slate-400">
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       From {query.sender_name} ({query.sender_role}) | {query.sender_email} | {new Date(query.created_at).toLocaleString()}
                     </p>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -2834,7 +3227,9 @@ function AdminDashboard({ onLogout }) {
                       </div>
                     )}
 
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-white/85 p-3 dark:border-slate-700 dark:bg-slate-900/65">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Admin Response</p>
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                       <select
                         value={(queryUpdateForm[query.id]?.status ?? query.status)}
                         onChange={(e) => handleQueryUpdateInput(query.id, "status", e.target.value)}
@@ -2849,7 +3244,7 @@ function AdminDashboard({ onLogout }) {
                         value={(queryUpdateForm[query.id]?.admin_note ?? query.admin_note ?? "")}
                         onChange={(e) => handleQueryUpdateInput(query.id, "admin_note", e.target.value)}
                         className="md:col-span-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm transition placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-emerald-900/40"
-                        placeholder="Add internal/admin note..."
+                        placeholder="Write admin reply for this user query..."
                       />
                     </div>
                     <div className="mt-2">
@@ -2858,8 +3253,9 @@ function AdminDashboard({ onLogout }) {
                         onClick={() => handleSupportQueryUpdate(query.id)}
                         className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/40"
                       >
-                        Update Query
+                        Send Reply & Update Status
                       </button>
+                    </div>
                     </div>
                   </div>
                 ))}
@@ -2878,7 +3274,7 @@ function AdminDashboard({ onLogout }) {
 
       return (
         <div className="space-y-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-violet-50/30 p-6 shadow-sm ring-1 ring-violet-100/50">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-semibold text-slate-800">Notifications</h3>
@@ -2953,10 +3349,13 @@ function AdminDashboard({ onLogout }) {
         closed: "border-slate-300 bg-slate-100 text-slate-700",
       };
       const openCount = conflicts.filter((item) => (item.status || "open") !== "resolved").length;
+      const reviewCount = conflicts.filter((item) => (item.status || "open") === "in_review").length;
+      const resolvedCount = conflicts.filter((item) => (item.status || "open") === "resolved").length;
       return (
         <div className="space-y-4">
-          <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-amber-50/30 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
-            <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-amber-200/25 blur-3xl dark:bg-amber-700/10" />
+          <div className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white via-amber-50/50 to-orange-50/35 p-6 shadow-sm ring-1 ring-amber-100/50 dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/75 dark:ring-slate-700/70">
+            <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-amber-300/30 blur-3xl dark:bg-amber-700/10" />
+            <div className="pointer-events-none absolute -left-8 bottom-0 h-24 w-24 rounded-full bg-orange-200/30 blur-2xl dark:bg-orange-700/10" />
             <div className="relative">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -2964,13 +3363,25 @@ function AdminDashboard({ onLogout }) {
                   <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Conflict Resolution</h3>
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Track scheduling conflicts and resolve them with audit history.</p>
                 </div>
-                <div className="rounded-xl border border-amber-200 bg-white/80 px-3 py-2 shadow-sm dark:border-amber-800 dark:bg-slate-900/70">
+                <div className="rounded-xl border border-amber-200 bg-white/85 px-3 py-2.5 shadow-sm dark:border-amber-800 dark:bg-slate-900/70">
                   <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Open Cases</p>
-                  <p className="mt-1 text-lg font-semibold text-slate-800 dark:text-slate-100">{openCount}</p>
+                  <p className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">{openCount}</p>
                 </div>
               </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                  Open {openCount}
+                </span>
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                  In Review {reviewCount}
+                </span>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+                  Resolved {resolvedCount}
+                </span>
+              </div>
 
-              <form onSubmit={handleCreateConflict} className="mt-5 rounded-xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 md:p-5">
+              <form onSubmit={handleCreateConflict} className="mt-5 rounded-xl border border-slate-200/90 bg-white/85 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/65 md:p-5">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400">Log New Conflict</p>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <input
                     name="title"
@@ -2982,7 +3393,7 @@ function AdminDashboard({ onLogout }) {
                   />
                   <button
                     type="submit"
-                    className="rounded-lg bg-amber-600 text-white px-4 py-2.5 text-sm font-semibold shadow-sm transition hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-200 dark:focus:ring-amber-900/40"
+                    className="rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-200 dark:focus:ring-amber-900/40"
                   >
                     Add Conflict
                   </button>
@@ -2999,7 +3410,7 @@ function AdminDashboard({ onLogout }) {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6 dark:border-slate-700 dark:bg-slate-900/60">
+          <div className="rounded-2xl border border-slate-200/90 bg-white shadow-sm p-6 ring-1 ring-slate-100/70 dark:border-slate-700 dark:bg-slate-900/60 dark:ring-slate-800/80">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h4 className="text-base font-semibold text-slate-900 dark:text-slate-100">Open Conflicts</h4>
@@ -3008,7 +3419,7 @@ function AdminDashboard({ onLogout }) {
               <button
                 type="button"
                 onClick={loadConflicts}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 Refresh
               </button>
@@ -3023,18 +3434,18 @@ function AdminDashboard({ onLogout }) {
             ) : (
               <div className="mt-4 space-y-3">
                 {conflicts.map((conflict) => (
-                  <div key={conflict.id} className="rounded-xl border border-slate-200 bg-white/90 p-4 shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900/55">
+                  <div key={conflict.id} className="rounded-xl border border-slate-200/90 bg-gradient-to-br from-white to-slate-50/70 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-700 dark:from-slate-900/70 dark:to-slate-800/60">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{conflict.title}</p>
                       <div className="flex items-center gap-2">
                         <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${statusClasses[conflict.status] || "border-slate-300 bg-slate-100 text-slate-700"}`}>
-                          {conflict.status || "open"}
+                          {(conflict.status || "open").replace("_", " ")}
                         </span>
                         {conflict.status !== "resolved" && (
                           <button
                             type="button"
                             onClick={() => handleReviewConflict(conflict.id)}
-                            className="rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 px-2.5 py-1 text-xs font-semibold"
+                            className="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-900/25 dark:text-blue-300 dark:hover:bg-blue-900/40"
                           >
                             In Review
                           </button>
@@ -3043,7 +3454,7 @@ function AdminDashboard({ onLogout }) {
                           <button
                             type="button"
                             onClick={() => handleResolveConflict(conflict.id)}
-                            className="rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-2.5 py-1 text-xs font-semibold"
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/25 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
                           >
                             Resolve
                           </button>
@@ -3099,9 +3510,9 @@ function AdminDashboard({ onLogout }) {
                 <button
                   type="button"
                   onClick={loadUsers}
-                  className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
                 >
-                  Apply
+                  Refresh
                 </button>
               </div>
             </div>
@@ -3371,11 +3782,19 @@ function AdminDashboard({ onLogout }) {
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-lg font-semibold text-slate-800">Classroom-wise Grade Reviews</h3>
+                <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800">
+                  <svg className="h-5 w-5 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 9l10-4 10 4-10 4-10-4z" />
+                    <path d="M6 10.5v3.5c0 1.9 2.8 3.5 6 3.5s6-1.6 6-3.5v-3.5" />
+                    <path d="M20 10v5.2" />
+                    <circle cx="20" cy="16.8" r="1.1" fill="currentColor" stroke="none" />
+                  </svg>
+                  Classroom-wise Grade Reviews
+                </h3>
                 <p className="text-sm text-slate-500 mt-1">Review teacher-submitted grades by classroom. Students see grades only after admin approval.</p>
               </div>
               <div className="flex items-center gap-2">
-                <select value={assignmentReviewFilter} onChange={(e) => setAssignmentReviewFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <select value={assignmentReviewFilter} onChange={(e) => setAssignmentReviewFilter(e.target.value)} className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm shadow-sm">
                   <option value="pending">Pending</option>
                   <option value="approved">Approved</option>
                   <option value="rejected">Rejected</option>
@@ -3387,18 +3806,35 @@ function AdminDashboard({ onLogout }) {
                     loadAssignmentReviews();
                     loadReviewClassrooms();
                   }}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
                 >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <path d="M21 3v6h-6" />
+                  </svg>
                   Refresh
                 </button>
               </div>
             </div>
-            <div className="mt-4 inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">Pending confirmations: {pendingCount}</div>
+            <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v5" />
+                <path d="M12 16h.01" />
+              </svg>
+              Pending confirmations: {pendingCount}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
             <div className="xl:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-              <h4 className="text-sm font-semibold text-slate-800">Classrooms</h4>
+              <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <svg className="h-4 w-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="M3 9h18M8 4v4M16 4v4" />
+                </svg>
+                Classrooms
+              </h4>
               <p className="text-xs text-slate-500 mt-1">Select a classroom to review submitted grades.</p>
               {loadingReviewClassrooms ? (
                 <p className="text-sm text-slate-500 mt-4">Loading classrooms...</p>
@@ -3416,7 +3852,7 @@ function AdminDashboard({ onLogout }) {
                         setSelectedReviewClassroomKey(room.key);
                         setSelectedReviewSubmissionId(null);
                       }}
-                      className={`w-full rounded-lg border px-3 py-2.5 text-left ${resolvedClassroomKey === room.key ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                      className={`w-full rounded-lg border px-3 py-2.5 text-left transition ${resolvedClassroomKey === room.key ? "border-blue-300 bg-blue-50 shadow-sm" : "border-slate-200 bg-white hover:bg-slate-50"}`}
                     >
                       <p className="text-sm font-semibold text-slate-800">{room.classroomTitle}</p>
                       <p className="mt-1 text-xs text-slate-500">{room.department} | Year {room.year} | {room.section} | {room.semester}</p>
@@ -3430,7 +3866,13 @@ function AdminDashboard({ onLogout }) {
 
             <div className="xl:col-span-8 bg-white rounded-xl border border-slate-200 shadow-sm p-4">
               {!selectedClassroom ? (
-                <p className="text-sm text-slate-500">Select a classroom from the left panel to review grades.</p>
+                <p className="flex items-center gap-2 text-sm text-slate-500">
+                  <svg className="h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+                    <path d="M12 8v4l3 3" />
+                    <circle cx="12" cy="12" r="9" />
+                  </svg>
+                  Select a classroom from the left panel to review grades.
+                </p>
               ) : selectedReviewRow ? (
                 <div>
                   <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
@@ -3441,8 +3883,11 @@ function AdminDashboard({ onLogout }) {
                     <button
                       type="button"
                       onClick={() => setSelectedReviewSubmissionId(null)}
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                     >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M15 18l-6-6 6-6" />
+                      </svg>
                       Back to List
                     </button>
                   </div>
@@ -3503,7 +3948,13 @@ function AdminDashboard({ onLogout }) {
                 <div className="space-y-3 max-h-[68vh] overflow-y-auto pr-1">
                   {selectedClassroomRows.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6">
-                      <p className="text-sm font-medium text-slate-700">No grade submissions yet for this classroom.</p>
+                      <p className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                        <svg className="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+                          <path d="M9 12h6M9 16h4" />
+                          <path d="M4 6h16v12H4z" />
+                        </svg>
+                        No grade submissions yet for this classroom.
+                      </p>
                       <p className="mt-1 text-xs text-slate-500">Once faculty reviews student submissions, records will appear here for admin approval.</p>
                     </div>
                   ) : selectedClassroomRows.map((row) => (

@@ -48,6 +48,11 @@ const PreferenceService = {
     return response.data;
   },
 
+  notifyTimetableConflictSuggestions: async (payload) => {
+    const response = await API.post("/admin/timetable/conflicts/notify", payload);
+    return response.data;
+  },
+
   getAdminPublishedTimetable: async (semester) => {
     const response = await API.get("/admin/timetable", {
       params: semester ? { semester } : {},
@@ -74,6 +79,11 @@ const PreferenceService = {
 
   deleteRoom: async (roomId) => {
     const response = await API.delete(`/admin/rooms/${roomId}`);
+    return response.data;
+  },
+
+  shiftRoomAllocationsForMaintenance: async (roomId, payload) => {
+    const response = await API.post(`/admin/rooms/${roomId}/maintenance-shift`, payload);
     return response.data;
   },
 

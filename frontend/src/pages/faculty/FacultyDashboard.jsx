@@ -1643,6 +1643,16 @@ function FacultyDashboard({ onLogout }) {
     return classroomAnnouncementsById[selectedClassroom.id] || [];
   }, [selectedClassroom?.id, classroomAnnouncementsById]);
 
+  const announcementOnlyInboxMessages = useMemo(() => {
+    return (inboxMessages || []).filter((msg) => {
+      const subject = String(msg?.subject || "").toLowerCase();
+      if (subject.includes("system conflict alert")) return false;
+      if (subject.includes("timetable conflict alert")) return false;
+      if (subject.includes("timetable slot updated")) return false;
+      return true;
+    });
+  }, [inboxMessages]);
+
   const facultyNotificationFeedItems = useMemo(() => {
     const announcementItems = (inboxMessages || []).map((msg) => ({
       id: `announce-${msg.id}`,
@@ -1654,10 +1664,26 @@ function FacultyDashboard({ onLogout }) {
       kind: "announcement",
       roleTag: msg.recipient_role || "faculty",
     }));
-    return [...announcementItems].sort(
+    const conflictItems = (facultyInbox || [])
+      .filter((msg) => {
+        const subject = String(msg?.subject || "").toLowerCase();
+        return subject.includes("system conflict alert") || subject.includes("timetable conflict alert");
+      })
+      .map((msg) => ({
+        id: `conflict-direct-${msg.id}`,
+        actorName: msg.sender_name || "Admin",
+        actionText: "sent a timetable conflict suggestion",
+        bodyText: msg.body || "",
+        createdAt: msg.created_at,
+        subject: msg.subject || "System Conflict Alert",
+        kind: "conflict_alert",
+        roleTag: "faculty",
+        senderEmail: msg.sender_email || "",
+      }));
+    return [...announcementItems, ...conflictItems].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [inboxMessages]);
+  }, [inboxMessages, facultyInbox]);
 
   const handleSelectedClassroomField = (e) => {
     const { name, value } = e.target;
@@ -1996,7 +2022,7 @@ function FacultyDashboard({ onLogout }) {
       return (
         <div className="space-y-5">
           <AnnouncementCarousel
-            messages={inboxMessages}
+            messages={announcementOnlyInboxMessages}
             loading={loadingInboxMessages}
             error={inboxError}
             title="Announcement"
@@ -5617,9 +5643,11 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "notifications") {
-      const adminNotificationCount = facultyNotificationFeedItems.length;
+      const adminNotificationCount = facultyNotificationFeedItems.filter(
+        (item) => item.kind === "announcement" || item.kind === "conflict_alert"
+      ).length;
       const filteredNotificationItems = facultyNotificationFeedItems.filter((item) => {
-        if (notificationTypeFilter === "admin") return item.kind === "announcement";
+        if (notificationTypeFilter === "admin") return item.kind === "announcement" || item.kind === "conflict_alert";
         return true;
       });
 
@@ -5720,10 +5748,12 @@ function FacultyDashboard({ onLogout }) {
                         <div className="flex shrink-0 items-center gap-2">
                           <span
                             className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
-                              "border-blue-200 bg-blue-50 text-blue-700"
+                              item.kind === "conflict_alert"
+                                ? "border-amber-200 bg-amber-50 text-amber-700"
+                                : "border-blue-200 bg-blue-50 text-blue-700"
                             }`}
                           >
-                            Admin Announcement
+                            {item.kind === "conflict_alert" ? "System Conflict Alert" : "Admin Announcement"}
                           </span>
                           <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
                             {notificationTimeAgo(item.createdAt)}
@@ -5757,12 +5787,27 @@ function FacultyDashboard({ onLogout }) {
       };
       const conflictAlerts = (inboxMessages || []).filter((msg) => {
         const subject = String(msg?.subject || "").toLowerCase();
-        return subject.includes("timetable conflict alert");
+        return subject.includes("timetable conflict alert") || subject.includes("system conflict alert");
       });
       const directConflictAlerts = (facultyInbox || []).filter((msg) => {
         const subject = String(msg?.subject || "").toLowerCase();
-        return subject.includes("timetable conflict alert");
+        return subject.includes("timetable conflict alert") || subject.includes("system conflict alert");
       });
+      const allRawAlerts = [...directConflictAlerts, ...conflictAlerts];
+      const dedupedAlerts = Object.values(
+        allRawAlerts.reduce((acc, alert) => {
+          const subject = String(alert?.subject || "System Conflict Alert").trim();
+          const body = String(alert?.body || "").trim();
+          const semesterKey = subject.toLowerCase();
+          const unassignedMatch = body.match(/Unassigned slots:\s*(\d+)/i);
+          const unassignedCount = unassignedMatch ? Number(unassignedMatch[1]) : 0;
+          const key = `${semesterKey}::${unassignedCount}`;
+          const currentTs = new Date(alert?.created_at || 0).getTime();
+          const existingTs = new Date(acc[key]?.created_at || 0).getTime();
+          if (!acc[key] || currentTs > existingTs) acc[key] = alert;
+          return acc;
+        }, {})
+      ).sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
 
       return (
         <div className="space-y-4">
@@ -5771,7 +5816,7 @@ function FacultyDashboard({ onLogout }) {
               <h4 className="text-base font-semibold text-slate-800">System Conflict Alerts</h4>
               <button
                 type="button"
-                onClick={loadInboxMessages}
+                onClick={() => Promise.all([loadInboxMessages(), loadFacultyPeerInbox()])}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
               >
                 Refresh Alerts
@@ -5779,32 +5824,56 @@ function FacultyDashboard({ onLogout }) {
             </div>
             {loadingInboxMessages || loadingFacultyInbox ? (
               <p className="text-sm text-slate-500 mt-4">Loading alerts...</p>
-            ) : conflictAlerts.length === 0 && directConflictAlerts.length === 0 ? (
+            ) : dedupedAlerts.length === 0 ? (
               <p className="text-sm text-slate-500 mt-4">No system conflict alerts yet.</p>
             ) : (
               <div className="mt-4 space-y-3">
-                {conflictAlerts.map((alert) => (
-                  <div key={`conflict-alert-${alert.id}`} className="rounded-lg border border-amber-200 bg-amber-50/70 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-amber-900">{alert.subject || "Timetable Conflict Alert"}</p>
-                      <span className="text-xs text-amber-700">
-                        {alert.created_at ? new Date(alert.created_at).toLocaleString() : "-"}
-                      </span>
-                    </div>
-                    <p className="text-sm text-amber-800 mt-2 whitespace-pre-wrap">{alert.body}</p>
-                  </div>
-                ))}
-                {directConflictAlerts.map((alert) => (
-                  <div key={`direct-conflict-alert-${alert.id}`} className="rounded-lg border border-blue-200 bg-blue-50/70 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-blue-900">{alert.subject || "Timetable Conflict Alert"}</p>
-                      <span className="text-xs text-blue-700">
-                        {alert.created_at ? new Date(alert.created_at).toLocaleString() : "-"}
-                      </span>
-                    </div>
-                    <p className="text-sm text-blue-800 mt-2 whitespace-pre-wrap">{alert.body}</p>
-                  </div>
-                ))}
+                {dedupedAlerts.map((alert) => {
+                  const rawBody = String(alert?.body || "");
+                  const lines = rawBody.split("\n").map((line) => line.trim()).filter(Boolean);
+                  const headingFiltered = lines.filter((line) => !line.toLowerCase().startsWith("system conflict alert -"));
+                  const actionLine = headingFiltered.find((line) => line.toLowerCase().startsWith("action:")) || "";
+                  const suggestionLine = headingFiltered.find((line) => line.toLowerCase().includes("suggestion:")) || "";
+                  const unassignedLine = headingFiltered.find((line) => line.toLowerCase().startsWith("unassigned slots:")) || "";
+                  const summaryLine =
+                    headingFiltered.find((line) => line.toLowerCase().includes("could not be assigned")) ||
+                    headingFiltered.find((line) => line.toLowerCase().includes("auto-generation detected")) ||
+                    "";
+                  const slotLine = headingFiltered.find((line) => line.startsWith("- ")) || "";
+                  return (
+                    <article key={`conflict-alert-${alert.id}`} className="rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-amber-900">{alert.subject || "System Conflict Alert"}</p>
+                        <span className="rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">
+                          {alert.created_at ? new Date(alert.created_at).toLocaleString() : "-"}
+                        </span>
+                      </div>
+                      {summaryLine && <p className="mt-2 text-sm text-slate-700">{summaryLine}</p>}
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Unassigned</p>
+                          <p className="mt-1 text-sm font-semibold text-rose-700">{unassignedLine || "-"}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Action</p>
+                          <p className="mt-1 text-sm text-slate-700">{actionLine || "Open Conflict Requests for next step."}</p>
+                        </div>
+                      </div>
+                      {slotLine && (
+                        <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Affected Slot</p>
+                          <p className="mt-1 text-sm text-slate-700">{slotLine.replace(/^- /, "")}</p>
+                        </div>
+                      )}
+                      {suggestionLine && (
+                        <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Suggested Fix</p>
+                          <p className="mt-1 text-sm text-emerald-800">{suggestionLine.replace(/^Suggestion:\s*/i, "")}</p>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -5902,19 +5971,55 @@ function FacultyDashboard({ onLogout }) {
                   </p>
                 )}
                 {facultyConflicts.map((item) => (
-                  <div key={item.id} className="rounded-lg border border-slate-200 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-slate-800">{item.title}</p>
-                      <span className={`text-xs rounded-full px-2.5 py-1 border ${statusClasses[item.status] || "bg-slate-100 text-slate-700 border-slate-300"}`}>
+                  <article key={item.id} className="rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                      <span className={`text-xs rounded-full px-2.5 py-1 border font-semibold ${statusClasses[item.status] || "bg-slate-100 text-slate-700 border-slate-300"}`}>
                         {item.status}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="mt-1 text-xs text-slate-500">
                       Submitted on {new Date(item.created_at).toLocaleString()}
                     </p>
-                    {item.description && (
-                      <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{item.description}</p>
-                    )}
+                    {(() => {
+                      const raw = String(item.description || "");
+                      const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+                      const summaryLine =
+                        lines.find((line) => line.toLowerCase().includes("could not be assigned")) ||
+                        lines.find((line) => line.toLowerCase().includes("auto-generated")) ||
+                        "";
+                      const unassignedLine = lines.find((line) => line.toLowerCase().startsWith("unassigned slots:")) || "";
+                      const slotLine = lines.find((line) => line.startsWith("- ")) || "";
+                      const suggestionLine = lines.find((line) => line.toLowerCase().includes("suggestion:")) || "";
+                      const actionLine = lines.find((line) => line.toLowerCase().startsWith("action:")) || "";
+                      return (
+                        <div className="mt-3 space-y-2">
+                          {summaryLine && <p className="text-sm text-slate-700">{summaryLine}</p>}
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Unassigned</p>
+                              <p className="mt-1 text-sm font-semibold text-rose-700">{unassignedLine || "-"}</p>
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Action</p>
+                              <p className="mt-1 text-sm text-slate-700">{actionLine || "Open Conflict Requests for next step."}</p>
+                            </div>
+                          </div>
+                          {slotLine && (
+                            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Affected Slot</p>
+                              <p className="mt-1 text-sm text-slate-700">{slotLine.replace(/^- /, "")}</p>
+                            </div>
+                          )}
+                          {suggestionLine && (
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Suggested Fix</p>
+                              <p className="mt-1 text-sm text-emerald-800">{suggestionLine.replace(/^Suggestion:\s*/i, "")}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {item.status !== "resolved" && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button
@@ -5948,11 +6053,11 @@ function FacultyDashboard({ onLogout }) {
                       </div>
                     )}
                     {item.resolved_at && (
-                      <p className="text-xs text-emerald-700 mt-2">
+                      <p className="text-xs text-emerald-700 mt-3">
                         Resolved on {new Date(item.resolved_at).toLocaleString()}
                       </p>
                     )}
-                  </div>
+                  </article>
                 ))}
               </div>
             )}

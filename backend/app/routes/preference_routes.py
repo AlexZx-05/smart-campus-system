@@ -1421,8 +1421,10 @@ def _notify_impacted_faculty_conflicts(admin_user_id, semester, unassigned, assi
                 )
             lines.append(base)
 
-        subject = f"Timetable Conflict Alert - {semester or 'Current Semester'}"
+        semester_text = semester or "Current Semester"
+        subject = f"System Conflict Alert - {semester_text}"
         body = (
+            f"System Conflict Alert - {semester_text}\n\n"
             "Some of your approved preferences could not be assigned during draft generation.\n\n"
             f"Unassigned slots: {len(items)}\n\n"
             f"{chr(10).join(lines)}\n\n"
@@ -1444,6 +1446,7 @@ def _notify_impacted_faculty_conflicts(admin_user_id, semester, unassigned, assi
         )
         if existing_conflict:
             existing_conflict.description = body
+            existing_conflict.created_at = datetime.utcnow()
             if existing_conflict.status != "open":
                 existing_conflict.status = "open"
                 existing_conflict.resolved_at = None
@@ -1467,8 +1470,10 @@ def _notify_impacted_faculty_conflicts(admin_user_id, semester, unassigned, assi
             .order_by(FacultyPeerMessage.created_at.desc())
             .first()
         )
-        should_send_new_message = not latest_msg or (latest_msg.body or "").strip() != body.strip()
-        if should_send_new_message:
+        if latest_msg:
+            latest_msg.body = body
+            latest_msg.created_at = datetime.utcnow()
+        else:
             db.session.add(
                 FacultyPeerMessage(
                     sender_id=admin_user_id,
@@ -1510,6 +1515,34 @@ def _cleanup_duplicate_auto_conflicts():
     return removed
 
 
+def _cleanup_duplicate_conflict_alert_messages():
+    rows = (
+        AdminMessage.query
+        .filter(
+            AdminMessage.recipient_role == "faculty",
+            or_(
+                AdminMessage.subject.like("Timetable Conflict Alert - %"),
+                AdminMessage.subject.like("System Conflict Alert - %"),
+            ),
+        )
+        .order_by(AdminMessage.sender_id.asc(), AdminMessage.subject.asc(), AdminMessage.created_at.desc())
+        .all()
+    )
+    grouped = {}
+    for row in rows:
+        key = (row.sender_id, (row.subject or "").strip().lower())
+        grouped.setdefault(key, []).append(row)
+
+    removed = 0
+    for _, items in grouped.items():
+        if len(items) <= 1:
+            continue
+        for dup in items[1:]:
+            db.session.delete(dup)
+            removed += 1
+    return removed
+
+
 def _notify_faculty_timetable_conflicts(admin_user_id, semester, total_requested, total_assigned, unassigned):
     if not admin_user_id or not unassigned:
         return
@@ -1526,8 +1559,9 @@ def _notify_faculty_timetable_conflicts(admin_user_id, semester, total_requested
         impacted_preview += f", +{len(impacted_names) - 8} more"
 
     semester_text = semester or "Current Semester"
-    subject = f"Timetable Conflict Alert - {semester_text}"
+    subject = f"System Conflict Alert - {semester_text}"
     body = (
+        f"System Conflict Alert - {semester_text}\n\n"
         f"Auto-generation detected timetable conflicts for {semester_text}.\n\n"
         f"Requested slots: {total_requested}\n"
         f"Assigned slots: {total_assigned}\n"
@@ -1536,13 +1570,27 @@ def _notify_faculty_timetable_conflicts(admin_user_id, semester, total_requested
         "Please review your timetable preferences and submit a conflict request if adjustment is needed."
     )
 
-    row = AdminMessage(
-        sender_id=admin_user_id,
-        recipient_role="faculty",
-        subject=subject,
-        body=body,
+    existing = (
+        AdminMessage.query
+        .filter(
+            AdminMessage.sender_id == admin_user_id,
+            AdminMessage.recipient_role == "faculty",
+            AdminMessage.subject == subject,
+        )
+        .order_by(AdminMessage.created_at.desc())
+        .first()
     )
-    db.session.add(row)
+    if existing:
+        existing.body = body
+        existing.created_at = datetime.utcnow()
+    else:
+        row = AdminMessage(
+            sender_id=admin_user_id,
+            recipient_role="faculty",
+            subject=subject,
+            body=body,
+        )
+        db.session.add(row)
 
 
 @preference_bp.route("/api/faculty/preferences", methods=["POST"])
@@ -1928,14 +1976,23 @@ def generate_timetable_from_preferences():
             }
         faculty_summary[key]["total_slots"] += 1
 
-    # Notify only impacted faculty members via direct messages.
-    _notify_impacted_faculty_conflicts(
-        admin_user_id=user.id,
-        semester=semester,
-        unassigned=unassigned_with_suggestions,
-        assigned_slots=timetable,
-    )
+    # Real-time conflict alerts: impacted faculty receive latest notification on each generation.
+    if unassigned_with_suggestions:
+        _notify_impacted_faculty_conflicts(
+            admin_user_id=user.id,
+            semester=semester,
+            unassigned=unassigned_with_suggestions,
+            assigned_slots=timetable,
+        )
+        _notify_faculty_timetable_conflicts(
+            admin_user_id=user.id,
+            semester=semester,
+            total_requested=len(draft_slots),
+            total_assigned=len(timetable),
+            unassigned=unassigned_with_suggestions,
+        )
     _cleanup_duplicate_auto_conflicts()
+    _cleanup_duplicate_conflict_alert_messages()
     db.session.commit()
 
     return jsonify({
@@ -1947,6 +2004,44 @@ def generate_timetable_from_preferences():
         "unassigned": unassigned_with_suggestions,
         "faculty_summary": list(faculty_summary.values()),
         "timetable": timetable,
+    }), 200
+
+
+@preference_bp.route("/api/admin/timetable/conflicts/notify", methods=["POST"])
+@jwt_required()
+def notify_timetable_conflict_suggestions():
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    data = request.get_json() or {}
+    semester = (data.get("semester") or "").strip()
+    unassigned = data.get("unassigned") or []
+    assigned_slots = data.get("assigned_slots") or []
+
+    if not isinstance(unassigned, list) or len(unassigned) == 0:
+        return jsonify({"message": "No unassigned slots available to notify"}), 400
+    if not isinstance(assigned_slots, list):
+        assigned_slots = []
+
+    _notify_impacted_faculty_conflicts(
+        admin_user_id=user.id,
+        semester=semester,
+        unassigned=unassigned,
+        assigned_slots=assigned_slots,
+    )
+    _cleanup_duplicate_auto_conflicts()
+    db.session.commit()
+
+    impacted = {
+        str(item.get("faculty_id"))
+        for item in unassigned
+        if item.get("faculty_id") is not None
+    }
+    return jsonify({
+        "message": "Conflict suggestions sent to impacted faculty successfully.",
+        "impacted_faculty_count": len(impacted),
+        "unassigned_count": len(unassigned),
     }), 200
 
 
@@ -1971,6 +2066,8 @@ def publish_timetable():
     occupancy = {}
     prepared = []
 
+    slot_change_notifications = []
+
     for slot in slots:
         pref_id = _parse_int(slot.get("source_preference_id"))
         if not pref_id:
@@ -1979,6 +2076,17 @@ def publish_timetable():
         pref = FacultyPreference.query.get(pref_id)
         if not pref:
             return jsonify({"message": f"Preference {pref_id} not found"}), 404
+
+        slot_day = _normalize_day(slot.get("day")) if "day" in slot else pref.day
+        if not slot_day:
+            return jsonify({"message": f"Valid day is required for preference {pref_id}"}), 400
+
+        slot_start = (slot.get("start_time") if "start_time" in slot else pref.start_time) or ""
+        slot_end = (slot.get("end_time") if "end_time" in slot else pref.end_time) or ""
+        slot_start = str(slot_start).strip()
+        slot_end = str(slot_end).strip()
+        if not _is_valid_time_range(slot_start, slot_end):
+            return jsonify({"message": f"Invalid time range for preference {pref_id}"}), 400
 
         room_name = (slot.get("room") or "").strip()
         if not room_name:
@@ -1994,30 +2102,50 @@ def publish_timetable():
             }), 400
 
         for booked in occupancy.get(room_name, []):
-            if booked["day"] != pref.day:
+            if booked["day"] != slot_day:
                 continue
-            if _times_overlap(pref.start_time, pref.end_time, booked["start_time"], booked["end_time"]):
+            if _times_overlap(slot_start, slot_end, booked["start_time"], booked["end_time"]):
                 return jsonify({
                     "message": (
                         f"Room conflict in {room_name}: "
-                        f"{pref.day} {pref.start_time}-{pref.end_time}"
+                        f"{slot_day} {slot_start}-{slot_end}"
                     )
                 }), 400
 
         occupancy.setdefault(room_name, []).append(
-            {"day": pref.day, "start_time": pref.start_time, "end_time": pref.end_time}
+            {"day": slot_day, "start_time": slot_start, "end_time": slot_end}
         )
-        prepared.append((pref, room_name, room_meta.capacity))
+        prepared.append((pref, room_name, room_meta.capacity, slot_day, slot_start, slot_end))
+
+        if (
+            pref.day != slot_day
+            or str(pref.start_time or "") != slot_start
+            or str(pref.end_time or "") != slot_end
+        ):
+            slot_change_notifications.append({
+                "faculty_id": pref.faculty_id,
+                "subject": pref.subject or "Subject",
+                "old_day": pref.day,
+                "old_start": pref.start_time,
+                "old_end": pref.end_time,
+                "new_day": slot_day,
+                "new_start": slot_start,
+                "new_end": slot_end,
+                "semester": semester,
+            })
 
     TimetableSlot.query.filter_by(semester=semester).delete()
 
     created = []
-    for pref, room_name, room_capacity in prepared:
+    for pref, room_name, room_capacity, slot_day, slot_start, slot_end in prepared:
         built = _build_timetable_slot_from_preference(
             pref,
             room_name=room_name,
             room_capacity=room_capacity,
         )
+        built["day"] = slot_day
+        built["start_time"] = slot_start
+        built["end_time"] = slot_end
 
         timetable_slot = TimetableSlot(
             semester=semester,
@@ -2036,6 +2164,21 @@ def publish_timetable():
         )
         db.session.add(timetable_slot)
         created.append(timetable_slot)
+
+    for item in slot_change_notifications:
+        db.session.add(
+            AdminMessage(
+                sender_id=user.id,
+                recipient_role="faculty",
+                subject=f"Timetable slot updated - {item.get('semester') or 'Current Semester'}",
+                body=(
+                    f"Subject: {item.get('subject')}\n"
+                    f"Old slot: {item.get('old_day')} {item.get('old_start')}-{item.get('old_end')}\n"
+                    f"New slot: {item.get('new_day')} {item.get('new_start')}-{item.get('new_end')}\n"
+                    "Please follow the new timetable slot."
+                ),
+            )
+        )
 
     db.session.commit()
     _log_admin_activity(user.id, "timetable_publish", f"Published timetable for {semester} ({len(created)} slots)")
@@ -2163,6 +2306,107 @@ def delete_room(room_id):
     _log_admin_activity(user.id, "room_delete", f"Deleted room {deleted_name}")
     db.session.commit()
     return jsonify({"message": "Room deleted"}), 200
+
+
+@preference_bp.route("/api/admin/rooms/<int:room_id>/maintenance-shift", methods=["POST"])
+@jwt_required()
+def maintenance_shift_room_allocations(room_id):
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    room = Room.query.get(room_id)
+    if not room:
+        return jsonify({"message": "Room not found"}), 404
+
+    data = request.get_json() or {}
+    semester = (data.get("semester") or "").strip()
+    mark_inactive = bool(data.get("mark_inactive", True))
+    replacements = data.get("replacements") or []
+    if not isinstance(replacements, list) or len(replacements) == 0:
+        return jsonify({"message": "replacements must be a non-empty array"}), 400
+
+    target_slots_query = TimetableSlot.query.filter(TimetableSlot.room == room.name)
+    if semester:
+        target_slots_query = target_slots_query.filter(TimetableSlot.semester == semester)
+    target_slots = target_slots_query.all()
+    if not target_slots:
+        return jsonify({"message": "No timetable slots found for this room and semester"}), 404
+
+    target_by_id = {slot.id: slot for slot in target_slots}
+    active_rooms = Room.query.filter_by(is_active=True).all()
+    room_map = {r.name: r for r in active_rooms}
+
+    normalized = []
+    for item in replacements:
+        slot_id = _parse_int((item or {}).get("slot_id"))
+        new_room_name = str((item or {}).get("new_room") or "").strip()
+        if not slot_id or not new_room_name:
+            return jsonify({"message": "Each replacement must include slot_id and new_room"}), 400
+        slot = target_by_id.get(slot_id)
+        if not slot:
+            return jsonify({"message": f"Slot {slot_id} is not part of the selected room allocations"}), 400
+        if new_room_name == room.name:
+            return jsonify({"message": f"Slot {slot_id} cannot be reassigned to the same room"}), 400
+        new_room = room_map.get(new_room_name)
+        if not new_room:
+            return jsonify({"message": f"Target room {new_room_name} is not active"}), 400
+        if slot.student_count and new_room.capacity < slot.student_count:
+            return jsonify({
+                "message": f"Target room {new_room_name} capacity is less than student count for slot {slot_id}"
+            }), 400
+        normalized.append((slot, new_room))
+
+    for slot, new_room in normalized:
+        conflict_query = TimetableSlot.query.filter(
+            TimetableSlot.id != slot.id,
+            TimetableSlot.room == new_room.name,
+            TimetableSlot.day == slot.day,
+            TimetableSlot.semester == slot.semester,
+        )
+        for booked in conflict_query.all():
+            if _times_overlap(slot.start_time, slot.end_time, booked.start_time, booked.end_time):
+                return jsonify({
+                    "message": (
+                        f"Room conflict for slot {slot.id}: {new_room.name} is occupied on "
+                        f"{slot.day} {slot.start_time}-{slot.end_time}"
+                    )
+                }), 400
+
+    seen = []
+    for slot, new_room in normalized:
+        for other_slot, other_room in seen:
+            if new_room.name != other_room.name:
+                continue
+            if slot.day != other_slot.day or slot.semester != other_slot.semester:
+                continue
+            if _times_overlap(slot.start_time, slot.end_time, other_slot.start_time, other_slot.end_time):
+                return jsonify({
+                    "message": (
+                        f"Replacement conflict: slots {slot.id} and {other_slot.id} overlap in room {new_room.name}"
+                    )
+                }), 400
+        seen.append((slot, new_room))
+
+    for slot, new_room in normalized:
+        slot.room = new_room.name
+        slot.room_capacity = new_room.capacity
+
+    if mark_inactive:
+        room.is_active = False
+
+    db.session.commit()
+    _log_admin_activity(
+        user.id,
+        "room_maintenance_shift",
+        f"Reassigned {len(normalized)} slot(s) from room {room.name}" + (" and marked inactive" if mark_inactive else ""),
+    )
+    db.session.commit()
+    return jsonify({
+        "message": "Room allocations shifted successfully for maintenance.",
+        "shifted_slots": len(normalized),
+        "room": _serialize_room(room),
+    }), 200
 
 
 @preference_bp.route("/api/admin/rooms/availability", methods=["GET"])
@@ -2938,7 +3182,7 @@ def create_faculty_peer_message():
     user = _get_current_user()
     if not user:
         return jsonify({"message": "Unauthorized"}), 401
-    if user.role != "faculty":
+    if user.role not in {"faculty", "student"}:
         return jsonify({"message": "Forbidden"}), 403
 
     data = request.form if request.form else (request.get_json() or {})
