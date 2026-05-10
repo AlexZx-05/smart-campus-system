@@ -48,6 +48,7 @@ function FacultyDashboard({ onLogout }) {
   const [currentUserId, setCurrentUserId] = useState(null);
 
   const [profile, setProfile] = useState({
+    id: null,
     name: "",
     email: "",
     department: "",
@@ -141,6 +142,7 @@ function FacultyDashboard({ onLogout }) {
   const [facultyChatGroups, setFacultyChatGroups] = useState([]);
   const [loadingFacultyChatGroups, setLoadingFacultyChatGroups] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [selectedStudentThreadId, setSelectedStudentThreadId] = useState(null);
   const [selectedGroupMessages, setSelectedGroupMessages] = useState([]);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -304,6 +306,53 @@ function FacultyDashboard({ onLogout }) {
     () => Object.values(teacherChatMetaById).filter((row) => Number(row?.unreadCount || 0) > 0).length,
     [teacherChatMetaById]
   );
+  const studentMessageThreads = useMemo(() => {
+    const teacherIds = new Set((teacherDirectory || []).map((item) => Number(item.id)));
+    const meId = Number(currentUserId || profile?.id || 0);
+    const myEmail = String(profile?.email || "").trim().toLowerCase();
+    const map = new Map();
+    (facultyInbox || []).forEach((msg) => {
+      const senderId = Number(msg?.sender_id);
+      const recipientId = Number(msg?.recipient_id);
+      const senderEmail = String(msg?.sender_email || "").trim().toLowerCase();
+      const recipientEmail = String(msg?.recipient_email || "").trim().toLowerCase();
+      const senderRole = String(msg?.sender_role || "").toLowerCase();
+      const recipientRole = String(msg?.recipient_role || "").toLowerCase();
+      const outgoing = (meId > 0 && senderId === meId) || (!!myEmail && senderEmail === myEmail);
+      const incoming = (meId > 0 && recipientId === meId) || (!!myEmail && recipientEmail === myEmail);
+      const peerId = outgoing ? recipientId : senderId;
+      if (!peerId || (meId > 0 && peerId === meId)) return;
+      if (teacherIds.has(peerId)) return;
+      const peerRole = outgoing ? recipientRole : senderRole;
+      if (peerRole && peerRole !== "student") return;
+      if (!peerRole) {
+        const senderIsMe = (meId > 0 && senderId === meId) || (!!myEmail && senderEmail === myEmail);
+        const recipientIsMe = (meId > 0 && recipientId === meId) || (!!myEmail && recipientEmail === myEmail);
+        if (!senderIsMe && !recipientIsMe) return;
+      }
+      // Student inbox should represent incoming student-to-faculty threads only.
+      if (!incoming) return;
+
+      const peerName = (outgoing ? msg?.recipient_name : msg?.sender_name) || "Student";
+      const peerEmail = (outgoing ? msg?.recipient_email : msg?.sender_email) || "";
+      const existing = map.get(peerId) || {
+        id: peerId,
+        name: peerName,
+        email: peerEmail,
+        latestMessageMs: 0,
+        latestPreview: "",
+      };
+      const ts = new Date(msg?.created_at || 0).getTime();
+      if (Number.isFinite(ts) && ts >= existing.latestMessageMs) {
+        existing.latestMessageMs = ts;
+        existing.latestPreview = msg?.body || "";
+      }
+      if (!existing.name && peerName) existing.name = peerName;
+      if (!existing.email && peerEmail) existing.email = peerEmail;
+      map.set(peerId, existing);
+    });
+    return [...map.values()].sort((a, b) => b.latestMessageMs - a.latestMessageMs);
+  }, [facultyInbox, teacherDirectory, currentUserId, profile?.id, profile?.email]);
 
   const sidebarItems = [
     { key: "dashboard", label: "Dashboard" },
@@ -341,12 +390,14 @@ function FacultyDashboard({ onLogout }) {
     try {
       const data = await FacultyService.getProfile();
       setProfile({
+        id: data.id || null,
         name: data.name || "",
         email: data.email || "",
         department: data.department || "",
         roll_number: data.roll_number || "",
         profile_image_url: data.profile_image_url || "",
       });
+      if (data?.id) setCurrentUserId(data.id);
       if (data.name) setFacultyName(data.name);
       setPreferenceForm((prev) => ({
         ...prev,
@@ -1053,6 +1104,7 @@ function FacultyDashboard({ onLogout }) {
 
   const selectTeacherForMessage = (teacherId) => {
     setSelectedGroupId(null);
+    setSelectedStudentThreadId(null);
     setChatAttachment(null);
     setFacultyMessageForm((prev) => ({ ...prev, recipient_id: String(teacherId) }));
     try {
@@ -1071,6 +1123,7 @@ function FacultyDashboard({ onLogout }) {
 
   const selectGroupForMessage = async (groupId) => {
     setSelectedGroupId(Number(groupId));
+    setSelectedStudentThreadId(null);
     setChatAttachment(null);
     setFacultyMessageForm((prev) => ({ ...prev, recipient_id: "" }));
     setFacultyMessageError("");
@@ -1081,6 +1134,17 @@ function FacultyDashboard({ onLogout }) {
   const handleFacultyMessageInput = (e) => {
     const { name, value } = e.target;
     setFacultyMessageForm((prev) => ({ ...prev, [name]: value }));
+    setFacultyMessageError("");
+    setFacultyMessageFeedback("");
+  };
+
+  const selectStudentThread = (studentId) => {
+    setSelectedGroupId(null);
+    setSelectedStudentThreadId(Number(studentId));
+    setChatAttachment(null);
+    setFacultyMessageForm((prev) => ({ ...prev, recipient_id: "", body: "", subject: prev.subject || "Student Doubt Reply" }));
+    setShowTeacherProfilePanel(false);
+    setShowTeacherMenu(false);
     setFacultyMessageError("");
     setFacultyMessageFeedback("");
   };
@@ -1107,10 +1171,13 @@ function FacultyDashboard({ onLogout }) {
         await Promise.all([loadFacultyChatGroups(), loadSelectedGroupMessages(selectedGroupId)]);
         return;
       }
-      formData.append("recipient_id", String(Number(facultyMessageForm.recipient_id)));
-      formData.append("subject", (facultyMessageForm.subject || "").trim() || "Faculty Chat");
+      const resolvedRecipientId = selectedStudentThreadId
+        ? String(Number(selectedStudentThreadId))
+        : String(Number(facultyMessageForm.recipient_id));
+      formData.append("recipient_id", resolvedRecipientId);
+      formData.append("subject", (facultyMessageForm.subject || "").trim() || (selectedStudentThreadId ? "Student Doubt Reply" : "Faculty Chat"));
       const res = await PreferenceService.sendFacultyPeerMessage(formData);
-      setFacultyMessageFeedback(res.message || "Message sent to faculty.");
+      setFacultyMessageFeedback(res.message || (selectedStudentThreadId ? "Reply sent to student." : "Message sent to faculty."));
       setFacultyMessageForm((prev) => ({
         ...prev,
         subject: "",
@@ -1929,6 +1996,7 @@ function FacultyDashboard({ onLogout }) {
       const title = classworkCreateType === "assignment" ? classworkDraft.title.trim() : `[${prefix}] ${classworkDraft.title.trim()}`;
       const formData = new FormData();
       formData.append("title", title);
+      formData.append("classroom_id", String(selectedClassroom.id));
       formData.append("subject", selectedClassroom.subject || "");
       formData.append("description", classworkDraft.description || "");
       formData.append("semester", selectedClassroom.semester || "");
@@ -4741,16 +4809,19 @@ function FacultyDashboard({ onLogout }) {
     }
 
     if (activePage === "teachers") {
-      const selectedTeacher = teacherDirectory.find(
-        (teacher) => String(teacher.id) === String(facultyMessageForm.recipient_id)
-      );
+      const selectedTeacher = selectedStudentThreadId
+        ? null
+        : teacherDirectory.find((teacher) => String(teacher.id) === String(facultyMessageForm.recipient_id));
+      const selectedStudentThread = studentMessageThreads.find((student) => Number(student.id) === Number(selectedStudentThreadId));
       const selectedGroup = facultyChatGroups.find((group) => Number(group.id) === Number(selectedGroupId));
-      const selectedTeacherName = selectedGroup?.name || selectedTeacher?.name || "No Active Conversation";
-      const selectedTeacherInitial = (selectedGroup?.name || selectedTeacher?.name || "T").charAt(0).toUpperCase();
+      const selectedTeacherName = selectedGroup?.name || selectedTeacher?.name || selectedStudentThread?.name || "No Active Conversation";
+      const selectedTeacherInitial = (selectedGroup?.name || selectedTeacher?.name || selectedStudentThread?.name || "T").charAt(0).toUpperCase();
       const selectedTeacherMeta = selectedGroup
         ? `${selectedGroup.members?.length || 0} members`
         : selectedTeacher
         ? `${selectedTeacher.department || "Faculty"}${selectedTeacher.email ? ` | ${selectedTeacher.email}` : ""}`
+        : selectedStudentThread
+        ? `Student${selectedStudentThread.email ? ` | ${selectedStudentThread.email}` : ""}`
         : "Select a teacher to begin conversation";
       const sortedTeacherDirectory = [...teacherDirectory].sort((a, b) => {
         const aMeta = teacherChatMetaById[String(a.id)];
@@ -4763,14 +4834,25 @@ function FacultyDashboard({ onLogout }) {
         const meta = teacherChatMetaById[String(teacher.id)];
         if (teacherListFilter === "personal") return Number(meta?.latestMessageMs || 0) > 0;
         if (teacherListFilter === "groups") return false;
+        if (teacherListFilter === "students") return false;
         return true;
+      });
+      const filteredStudentThreads = studentMessageThreads.filter((student) => {
+        if (teacherListFilter !== "all" && teacherListFilter !== "students") return false;
+        const keyword = (teacherSearch || "").trim().toLowerCase();
+        if (!keyword) return true;
+        return (
+          (student.name || "").toLowerCase().includes(keyword) ||
+          (student.email || "").toLowerCase().includes(keyword) ||
+          (student.latestPreview || "").toLowerCase().includes(keyword)
+        );
       });
       const sortedGroups = [...(facultyChatGroups || [])].sort((a, b) => {
         const aTs = new Date(a.latest_message?.created_at || a.updated_at || 0).getTime();
         const bTs = new Date(b.latest_message?.created_at || b.updated_at || 0).getTime();
         return bTs - aTs;
       });
-      const selectedTeacherConversation = selectedTeacher
+      const selectedDirectConversation = selectedTeacher
         ? (facultyInbox || [])
             .filter((msg) => {
               return (
@@ -4779,10 +4861,19 @@ function FacultyDashboard({ onLogout }) {
               );
             })
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+        : selectedStudentThread
+        ? (facultyInbox || [])
+            .filter((msg) => {
+              return (
+                Number(msg.sender_id) === Number(selectedStudentThread.id) ||
+                Number(msg.recipient_id) === Number(selectedStudentThread.id)
+              );
+            })
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         : [];
-      const selectedConversation = selectedGroup ? selectedGroupMessages : selectedTeacherConversation;
+      const selectedConversation = selectedGroup ? selectedGroupMessages : selectedDirectConversation;
       const hasComposePayload = Boolean((facultyMessageForm.body || "").trim() || chatAttachment);
-      const sharedFiles = selectedTeacherConversation
+      const sharedFiles = selectedDirectConversation
         .flatMap((msg) => {
           const body = String(msg.body || "");
           const links = body.match(/https?:\/\/[^\s)]+/gi) || [];
@@ -4821,7 +4912,7 @@ function FacultyDashboard({ onLogout }) {
         })
         .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
       const visibleSharedFiles = sharedFiles.slice(0, 6);
-      const sharedMedia = selectedTeacherConversation
+      const sharedMedia = selectedDirectConversation
         .flatMap((msg) => {
           const body = String(msg.body || "");
           const links = body.match(/https?:\/\/[^\s)]+/gi) || [];
@@ -4882,17 +4973,19 @@ function FacultyDashboard({ onLogout }) {
                   placeholder="Search by name/email/department"
                   className="mt-4 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 />
-                <div className="mt-3 flex gap-2 rounded-full bg-slate-100 p-1 text-sm">
+                <div className="mt-3 rounded-2xl bg-slate-100 p-1">
+                  <div className="grid w-full grid-cols-4 gap-1 text-[13px] sm:text-sm">
                   {[
                     { key: "all", label: "All" },
                     { key: "personal", label: "Personal" },
+                    { key: "students", label: "Students" },
                     { key: "groups", label: "Groups" },
                   ].map((tab) => (
                     <button
                       key={tab.key}
                       type="button"
                       onClick={() => setTeacherListFilter(tab.key)}
-                      className={`rounded-full px-4 py-1.5 transition ${
+                      className={`whitespace-nowrap rounded-xl px-2 py-1.5 text-center transition ${
                         teacherListFilter === tab.key
                           ? "bg-white font-medium text-blue-700 shadow-sm"
                           : "text-slate-600 hover:bg-white/70"
@@ -4901,6 +4994,7 @@ function FacultyDashboard({ onLogout }) {
                       {tab.label}
                     </button>
                   ))}
+                  </div>
                 </div>
               </div>
 
@@ -4952,12 +5046,54 @@ function FacultyDashboard({ onLogout }) {
                       })}
                     </div>
                   )
+                ) : teacherListFilter === "students" ? (
+                  filteredStudentThreads.length === 0 ? (
+                    <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                      No student messages yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {filteredStudentThreads.map((student) => {
+                        const isSelected = Number(selectedStudentThreadId) === Number(student.id);
+                        const previewTime = student.latestMessageMs
+                          ? new Date(student.latestMessageMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          : "";
+                        return (
+                          <button
+                            key={`student-thread-${student.id}`}
+                            type="button"
+                            onClick={() => selectStudentThread(student.id)}
+                            className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                              isSelected
+                                ? "border-emerald-300 bg-emerald-50 shadow-[inset_3px_0_0_0_#059669]"
+                                : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">
+                                {(student.name || "S").charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="truncate text-[15px] font-semibold text-slate-900">{student.name}</p>
+                                  <p className="text-[11px] text-slate-400">{previewTime}</p>
+                                </div>
+                                <p className="truncate text-xs text-slate-500">{student.latestPreview || "Student message"}</p>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )
                 ) : loadingTeacherDirectory ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading teachers...</p>
                 ) : filteredTeacherDirectory.length === 0 ? (
                   <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
                     {teacherListFilter === "groups"
                       ? "No group conversations available."
+                      : teacherListFilter === "students"
+                      ? "No student messages yet."
                       : teacherListFilter === "personal"
                       ? "No personal conversations yet."
                       : "No other signed-up teachers found."}
@@ -4965,7 +5101,8 @@ function FacultyDashboard({ onLogout }) {
                 ) : (
                   <div className="space-y-1.5">
                     {filteredTeacherDirectory.map((teacher) => {
-                      const isSelected = String(facultyMessageForm.recipient_id) === String(teacher.id);
+                      const isSelected =
+                        !selectedStudentThreadId && String(facultyMessageForm.recipient_id) === String(teacher.id);
                       const teacherMeta = teacherChatMetaById[String(teacher.id)];
                       const preview = teacherMeta?.preview;
                       const unreadCount = Number(teacherMeta?.unreadCount || 0);
@@ -5014,6 +5151,46 @@ function FacultyDashboard({ onLogout }) {
                         </button>
                       );
                     })}
+                    {teacherListFilter === "all" && filteredStudentThreads.length > 0 && (
+                      <div className="pt-2">
+                        <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-emerald-700">
+                          Student Inbox
+                        </p>
+                        <div className="space-y-1.5">
+                          {filteredStudentThreads.slice(0, 6).map((student) => {
+                            const isSelected = Number(selectedStudentThreadId) === Number(student.id);
+                            const previewTime = student.latestMessageMs
+                              ? new Date(student.latestMessageMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                              : "";
+                            return (
+                              <button
+                                key={`all-student-thread-${student.id}`}
+                                type="button"
+                                onClick={() => selectStudentThread(student.id)}
+                                className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                                  isSelected
+                                    ? "border-emerald-300 bg-emerald-50 shadow-[inset_3px_0_0_0_#059669]"
+                                    : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50"
+                                }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">
+                                    {(student.name || "S").charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="truncate text-[15px] font-semibold text-slate-900">{student.name}</p>
+                                      <p className="text-[11px] text-slate-400">{previewTime}</p>
+                                    </div>
+                                    <p className="truncate text-xs text-slate-500">{student.latestPreview || "Student message"}</p>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -5037,6 +5214,10 @@ function FacultyDashboard({ onLogout }) {
                           {selectedTeacherInitial}
                         </div>
                       )
+                    ) : selectedStudentThread ? (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-700">
+                        {selectedTeacherInitial}
+                      </div>
                     ) : (
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-xs text-slate-600">--</div>
                     )}
@@ -5123,19 +5304,21 @@ function FacultyDashboard({ onLogout }) {
               <div className="min-h-0 flex-1 overflow-y-auto bg-[#eceff5] px-7 py-6">
                 {loadingFacultyInbox || (selectedGroupId && loadingFacultyChatGroups) ? (
                   <p className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">Loading teacher messages...</p>
-                ) : !selectedTeacher && !selectedGroup ? (
+                ) : !selectedTeacher && !selectedGroup && !selectedStudentThread ? (
                   <div className="flex h-full items-start justify-center pt-12">
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-7 text-center text-sm text-slate-600">
-                      Select a teacher or group from the left list to open the chat.
+                      Select a teacher, student, or group from the left list to open the chat.
                     </div>
                   </div>
                 ) : selectedConversation.length === 0 ? (
                   <div className="mx-auto w-full max-w-4xl space-y-4 pt-10">
                     <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
                       <p className="text-base font-semibold text-slate-900">No messages in {selectedTeacherName} yet.</p>
-                      <p className="mt-1 text-sm text-slate-500">Start with one of these professional conversation openers.</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {selectedStudentThread ? "Student thread is active. New student messages will appear here automatically." : "Start with one of these professional conversation openers."}
+                      </p>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    {!selectedStudentThread && <div className="grid gap-3 sm:grid-cols-2">
                       <button
                         type="button"
                         onClick={() =>
@@ -5184,7 +5367,7 @@ function FacultyDashboard({ onLogout }) {
                       >
                         Align assessment timelines
                       </button>
-                    </div>
+                    </div>}
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -5198,7 +5381,7 @@ function FacultyDashboard({ onLogout }) {
                           selectedTeacher?.profile_image_url ? (
                             <img src={selectedTeacher.profile_image_url} alt={selectedTeacher.name} className="h-8 w-8 rounded-full object-cover" />
                           ) : (
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+                            <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${selectedStudentThread ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-700"}`}>
                               {(msg.sender_name || selectedTeacherInitial || "F").charAt(0).toUpperCase()}
                             </div>
                           )
@@ -5273,6 +5456,11 @@ function FacultyDashboard({ onLogout }) {
                   className="hidden"
                   onChange={handleChatAttachmentPick}
                 />
+                {selectedStudentThread && (
+                  <div className="mb-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-800">
+                    Private student thread: visible only to this faculty account. Reply professionally for academic guidance.
+                  </div>
+                )}
                 {chatAttachment && (
                   <div className="mb-2 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                     <span className="truncate pr-2">{chatAttachment.name}</span>
@@ -5287,7 +5475,7 @@ function FacultyDashboard({ onLogout }) {
                 )}
                 <form
                   onSubmit={(e) => {
-                    if (!selectedTeacher && !selectedGroup) return;
+                    if (!selectedTeacher && !selectedGroup && !selectedStudentThread) return;
                     sendFacultyMessage(e);
                   }}
                   className="flex items-end gap-2"
@@ -5297,9 +5485,13 @@ function FacultyDashboard({ onLogout }) {
                     rows={1}
                     value={facultyMessageForm.body}
                     onChange={handleFacultyMessageInput}
-                    placeholder={selectedTeacher || selectedGroup ? "Type your message" : "Select a teacher or group first"}
+                    placeholder={
+                      selectedTeacher || selectedGroup || selectedStudentThread
+                        ? "Type your message"
+                        : "Select a conversation first"
+                    }
                     className="max-h-24 min-h-[46px] flex-1 resize-none rounded-full border border-slate-200 bg-slate-50 px-5 py-3 text-base outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-100"
-                    disabled={!selectedTeacher && !selectedGroup}
+                    disabled={!selectedTeacher && !selectedGroup && !selectedStudentThread}
                   />
                   <button
                     type="button"
@@ -5312,10 +5504,10 @@ function FacultyDashboard({ onLogout }) {
                   </button>
                   <button
                     type="submit"
-                    disabled={(!selectedTeacher && !selectedGroup) || !hasComposePayload}
+                    disabled={(!selectedTeacher && !selectedGroup && !selectedStudentThread) || !hasComposePayload}
                     aria-label="Send message"
                     className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
-                      (selectedTeacher || selectedGroup) && hasComposePayload
+                      (selectedTeacher || selectedGroup || selectedStudentThread) && hasComposePayload
                         ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700"
                         : "cursor-not-allowed bg-slate-200 text-slate-500"
                     }`}

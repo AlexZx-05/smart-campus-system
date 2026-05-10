@@ -64,6 +64,7 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
   const [openMenuId, setOpenMenuId] = useState(null);
   const [selectedClassroom, setSelectedClassroom] = useState(null);
   const [classroomDetailTab, setClassroomDetailTab] = useState("stream");
+  const [selectedClassroomAssignmentId, setSelectedClassroomAssignmentId] = useState(null);
   const [selectedClassroomThemeIndex, setSelectedClassroomThemeIndex] = useState(0);
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
   const [announcementText, setAnnouncementText] = useState("");
@@ -230,14 +231,13 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
   }, [activeClassroomTab, inviteCards, joinedCards, classroomSearch]);
 
   useEffect(() => {
-    if (!selectedAssignment) return;
-    const links = (selectedAssignment.my_submission?.resource_links || []).join("\n");
+    const links = (selectedAssignment?.my_submission?.resource_links || []).join("\n");
     setSubmissionForm({
-      submission_text: selectedAssignment.my_submission?.submission_text || "",
+      submission_text: selectedAssignment?.my_submission?.submission_text || "",
       resource_links: links,
       attachment: null,
     });
-  }, [selectedAssignmentId, selectedAssignment]);
+  }, [selectedAssignment]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -296,6 +296,7 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     setSelectedClassroom(room);
     setSelectedClassroomThemeIndex(themeIndex % classroomDetailThemes.length);
     setClassroomDetailTab("stream");
+    setSelectedClassroomAssignmentId(null);
     setOpenMenuId(null);
     setShowAnnouncementModal(false);
     setAnnouncementText("");
@@ -309,6 +310,9 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
       classroomDetailThemes[selectedClassroomThemeIndex % classroomDetailThemes.length] || classroomDetailThemes[0];
     const normalizeText = (value = "") => String(value || "").trim().toLowerCase();
     const classroomAssignments = (assignments || []).filter((assignment) => {
+      if (assignment?.classroom_id && detailRoom?.id && Number(assignment.classroom_id) !== Number(detailRoom.id)) {
+        return false;
+      }
       const roomSubject = normalizeText(detailRoom.subject);
       const roomFacultyId = detailRoom.faculty_id;
       const roomSemester = normalizeText(detailRoom.semester);
@@ -323,6 +327,9 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
     const renderedClasswork = [...classroomAssignments].sort(
       (a, b) => new Date(b.created_at || b.due_at || 0).getTime() - new Date(a.created_at || a.due_at || 0).getTime()
     );
+    const selectedClassroomAssignment =
+      renderedClasswork.find((assignment) => assignment.id === selectedClassroomAssignmentId) || null;
+    const detailAssignment = selectedClassroomAssignment || selectedAssignment || null;
     const formatDueDate = (dueAt) => {
       if (!dueAt) return "No due date";
       const parsed = new Date(dueAt);
@@ -333,17 +340,64 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
         year: "numeric",
       })}`;
     };
-    const streamItems = renderedClasswork.slice(0, 8).map((assignment) => {
-      const createdAt = assignment.created_at ? new Date(assignment.created_at) : null;
-      const dateText = createdAt && !Number.isNaN(createdAt.getTime())
-        ? createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
-        : "Recently";
-      return {
-        id: `stream-${assignment.id}`,
-        title: `${detailRoom.faculty_name || "Teacher"} posted: ${assignment.title || "New assignment"}`,
-        date: dateText,
-      };
-    });
+    const formatFullDateTime = (value) => {
+      if (!value) return "No date available";
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return "No date available";
+      return parsed.toLocaleString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    };
+    const renderTeacherInstructions = (value) => {
+      const raw = String(value || "").trim();
+      if (!raw) return null;
+
+      const normalized = raw
+        .replace(/(\d+)\.(\S)/g, "$1. $2")
+        .replace(/\r\n/g, "\n");
+
+      const lines = normalized
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      const numberedLines = lines.filter((line) => /^\d+\.\s+/.test(line));
+      const plainLines = lines.filter((line) => !/^\d+\.\s+/.test(line));
+
+      return (
+        <div className="space-y-5">
+          {plainLines.map((line, idx) => (
+            <p key={`plain-${idx}`} className="text-[1.03rem] leading-8 text-slate-700">
+              {line}
+            </p>
+          ))}
+          {numberedLines.length > 0 && (
+            <ol className="space-y-3 pl-6 text-[1.03rem] leading-8 text-slate-800">
+              {numberedLines.map((line, idx) => (
+                <li key={`item-${idx}`}>
+                  {line.replace(/^\d+\.\s+/, "")}
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      );
+    };
+    const openClassroomAssignment = (assignment, sourceTab = "stream") => {
+      setSelectedAssignmentId(assignment.id);
+      setSelectedClassroomAssignmentId(assignment.id);
+      setClassroomDetailTab(sourceTab);
+    };
+    const getSubmissionStatusText = (assignment) => {
+      if (assignment?.my_submission?.grade_visible_to_student) return "Reviewed";
+      if (assignment?.my_submission?.status) return assignment.my_submission.status;
+      return "Assigned";
+    };
+    const teacherInstructionContent = renderTeacherInstructions(selectedClassroomAssignment?.description);
 
     return (
       <div className="-mx-4 -mt-4 overflow-hidden bg-white md:-mx-6 md:-mt-6">
@@ -385,7 +439,253 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
           <div className="mx-auto max-w-[1240px]">
             <div className="min-h-[680px] rounded-[28px] border border-slate-200 bg-white/40 px-4 py-4 shadow-[0_20px_52px_-34px_rgba(15,23,42,0.22)] backdrop-blur-[2px] md:px-6 md:py-6">
               <div className="mx-auto max-w-[1140px] space-y-5">
-          {classroomDetailTab === "stream" && (
+          {selectedClassroomAssignment ? (
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <section className="rounded-[28px] border border-slate-200/90 bg-white px-6 py-6 shadow-[0_24px_60px_-34px_rgba(15,23,42,0.2)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-4">
+                    <div className={`mt-1 flex h-14 w-14 shrink-0 items-center justify-center rounded-full ${activeDetailTheme.iconWrap}`}>
+                      <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="5" y="4" width="14" height="16" rx="2.5" />
+                        <path d="M9 4.5h6M9 9.5h6M9 13.5h4" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h2 className="text-[2.3rem] font-semibold tracking-tight text-slate-900">
+                        {selectedClassroomAssignment.title || "Assignment"}
+                      </h2>
+                      <p className="mt-2 text-[1.02rem] text-slate-600">
+                        {detailRoom.faculty_name || selectedClassroomAssignment.created_by_name || "Teacher"} • {formatFullDateTime(selectedClassroomAssignment.created_at)}
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-medium text-slate-700">
+                          {selectedClassroomAssignment.subject || detailRoom.subject || "Classwork"}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-medium text-slate-700">
+                          {getSubmissionStatusText(selectedClassroomAssignment)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedClassroomAssignmentId(null)}
+                    className="rounded-full p-2 text-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                    aria-label="Close assignment detail"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="mt-6 grid gap-3 border-b border-slate-200 pb-5 md:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Subject</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {selectedClassroomAssignment.subject || detailRoom.subject || "Classwork"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Due</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{formatFullDateTime(selectedClassroomAssignment.due_at)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Classroom</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{detailRoom.title || "Classroom"}</p>
+                  </div>
+                </div>
+
+                <div className="mt-6 space-y-5">
+                  {teacherInstructionContent ? (
+                    <div className="rounded-3xl border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-6 py-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold uppercase tracking-[0.22em] text-slate-500">Teacher Instructions</p>
+                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                          Read carefully
+                        </span>
+                      </div>
+                      <div className="mt-4">
+                        {teacherInstructionContent}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm text-slate-500">
+                      Teacher has not added more instructions for this assignment.
+                    </div>
+                  )}
+
+                  {selectedClassroomAssignment.resource_links?.length > 0 && (
+                    <div>
+                      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Reference Links</p>
+                      <div className="mt-3 space-y-2">
+                        {selectedClassroomAssignment.resource_links.map((link) => (
+                          <a
+                            key={link}
+                            href={link}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block break-all rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-blue-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-800"
+                          >
+                            {link}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedClassroomAssignment.attachment_url && (
+                    <a
+                      href={selectedClassroomAssignment.attachment_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-blue-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-800"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 16V4" />
+                        <path d="m7 9 5-5 5 5" />
+                        <path d="M5 19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2" />
+                      </svg>
+                      Open teacher attachment: {selectedClassroomAssignment.attachment_name || "file"}
+                    </a>
+                  )}
+
+                  <div className="border-t border-slate-200 pt-5">
+                    <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Class comments</p>
+                    <button
+                      type="button"
+                      className={`mt-4 inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm font-semibold transition ${activeDetailTheme.pill}`}
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+                        <path d="M8 9h8M8 13h5" />
+                      </svg>
+                      Add comment
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <aside className="space-y-5">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_24px_60px_-34px_rgba(15,23,42,0.2)]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[2rem] font-semibold tracking-tight text-slate-900">Your work</p>
+                      <p className="mt-1 text-sm text-slate-500">{selectedClassroomAssignment.my_submission ? "Submission saved" : "Assigned"}</p>
+                    </div>
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-medium text-slate-700">
+                      {getSubmissionStatusText(selectedClassroomAssignment)}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Submission Deadline</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{formatFullDateTime(selectedClassroomAssignment.due_at)}</p>
+                    <p className="mt-1 text-xs text-slate-500">Work cannot be turned in after the due date unless the teacher updates the task.</p>
+                  </div>
+
+                  <form onSubmit={handleSubmit} className="mt-5 space-y-3">
+                    <textarea
+                      rows={5}
+                      value={submissionForm.submission_text}
+                      onChange={(e) =>
+                        setSubmissionForm((prev) => ({ ...prev, submission_text: e.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      placeholder="Write your answer or work summary..."
+                    />
+                    <textarea
+                      rows={3}
+                      value={submissionForm.resource_links}
+                      onChange={(e) =>
+                        setSubmissionForm((prev) => ({ ...prev, resource_links: e.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      placeholder="Submission links (one per line)"
+                    />
+                    <input
+                      type="file"
+                      onChange={(e) =>
+                        setSubmissionForm((prev) => ({ ...prev, attachment: e.target.files?.[0] || null }))
+                      }
+                      className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-700"
+                    />
+
+                    <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                      <span className="font-medium text-slate-700">
+                        {submissionForm.attachment?.name || "No file chosen"}
+                      </span>
+                      <span className="text-slate-400">Attachment</span>
+                    </div>
+
+                    {selectedClassroomAssignment.my_submission?.attachment_url && (
+                      <a
+                        href={selectedClassroomAssignment.my_submission.attachment_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-xs text-slate-600 hover:underline"
+                      >
+                        Last uploaded file: {selectedClassroomAssignment.my_submission.attachment_name}
+                      </a>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className={`w-full rounded-full px-4 py-3 text-base font-semibold text-white transition ${
+                        submitting ? "cursor-not-allowed bg-blue-400" : "bg-blue-600 hover:bg-blue-700"
+                      }`}
+                    >
+                      {submitting ? "Submitting..." : "Submit work"}
+                    </button>
+                  </form>
+
+                  {selectedClassroomAssignment.my_submission?.admin_review_status === "pending" &&
+                    (selectedClassroomAssignment.my_submission?.grade || selectedClassroomAssignment.my_submission?.teacher_feedback) && (
+                      <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                        <p className="text-xs font-semibold text-amber-700">Awaiting Admin Confirmation</p>
+                        <p className="mt-1 text-xs text-amber-800">
+                          Teacher reviewed your submission. Grade and detailed feedback will appear after admin approval.
+                        </p>
+                      </div>
+                    )}
+
+                  {selectedClassroomAssignment.my_submission?.teacher_feedback && (
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs font-semibold text-slate-700">Teacher Feedback</p>
+                      <p className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">
+                        {selectedClassroomAssignment.my_submission.teacher_feedback}
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedClassroomAssignment.my_submission?.grade_visible_to_student &&
+                    selectedClassroomAssignment.my_submission?.grade && (
+                      <div className="mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-3">
+                        <p className="text-xs font-semibold text-emerald-700">Final Grade</p>
+                        <p className="mt-1 text-base font-semibold text-emerald-900">
+                          {selectedClassroomAssignment.my_submission.grade}
+                        </p>
+                        {selectedClassroomAssignment.my_submission?.total_marks_awarded != null &&
+                          selectedClassroomAssignment.my_submission?.total_marks_out_of != null && (
+                            <p className="mt-1 text-sm text-emerald-900">
+                              Total: {selectedClassroomAssignment.my_submission.total_marks_awarded} / {selectedClassroomAssignment.my_submission.total_marks_out_of}
+                            </p>
+                          )}
+                      </div>
+                    )}
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_24px_60px_-34px_rgba(15,23,42,0.2)]">
+                  <p className="text-xl font-semibold text-slate-900">Private comments</p>
+                  <button
+                    type="button"
+                    className="mt-3 text-sm font-medium text-blue-700 transition hover:text-blue-800 hover:underline"
+                  >
+                    Add comment to {detailRoom.faculty_name || "teacher"}
+                  </button>
+                </div>
+              </aside>
+            </div>
+          ) : classroomDetailTab === "stream" && (
             <>
               <div className={`relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-r ${activeDetailTheme.hero} p-8 text-white shadow-[0_30px_70px_-36px_rgba(15,23,42,0.62)] sm:p-10`}>
                 <div className="absolute inset-0 opacity-[0.2]" style={{ backgroundImage: "radial-gradient(circle at 20% 20%, #fff 0, transparent 35%), radial-gradient(circle at 80% 40%, #fff 0, transparent 28%)" }} />
@@ -427,9 +727,14 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                     New announcement
                   </button>
 
-                  {streamItems.length > 0 ? (
-                    streamItems.map((item) => (
-                      <article key={item.id} className="flex items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_24px_36px_-24px_rgba(15,23,42,0.45)]">
+                  {renderedClasswork.length > 0 ? (
+                    renderedClasswork.slice(0, 8).map((assignment) => (
+                      <button
+                        key={`stream-${assignment.id}`}
+                        type="button"
+                        onClick={() => openClassroomAssignment(assignment, "stream")}
+                        className="flex w-full items-start gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_24px_36px_-24px_rgba(15,23,42,0.45)]"
+                      >
                         <div className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${activeDetailTheme.iconWrap}`}>
                           <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
                             <rect x="5" y="4" width="14" height="16" rx="2.5" />
@@ -437,11 +742,17 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                           </svg>
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[1.12rem] font-semibold text-slate-800">{item.title}</p>
-                          <p className="mt-1 text-sm text-slate-600">{item.date}</p>
+                          <p className="truncate text-[1.12rem] font-semibold text-slate-800">
+                            {detailRoom.faculty_name || "Teacher"} posted: {assignment.title || "New assignment"}
+                          </p>
+                          <p className="mt-1 text-sm text-slate-600">
+                            {assignment.created_at
+                              ? new Date(assignment.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+                              : "Recently"}
+                          </p>
                         </div>
-                        <button type="button" className="rounded-lg px-2 text-2xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">&#8942;</button>
-                      </article>
+                        <span className="rounded-lg px-2 text-2xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">&#8942;</span>
+                      </button>
                     ))
                   ) : (
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-sm text-slate-600">
@@ -510,9 +821,11 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                 <div className="divide-y divide-slate-200">
                   {renderedClasswork.length > 0 ? (
                     renderedClasswork.map((assignment) => (
-                      <article
+                      <button
                         key={assignment.id}
-                        className="group flex items-center gap-4 py-5 transition"
+                        type="button"
+                        onClick={() => openClassroomAssignment(assignment, "classwork")}
+                        className="group flex w-full items-center gap-4 py-5 text-left transition"
                       >
                         <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full shadow-inner ${activeDetailTheme.iconWrap}`}>
                           <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
@@ -539,13 +852,10 @@ function Assignments({ pendingJoinClassroomId = null, onHandledJoinLink }) {
                         <p className="shrink-0 text-[1.05rem] font-medium text-slate-700">
                           {formatDueDate(assignment.due_at)}
                         </p>
-                        <button
-                          type="button"
-                          className="rounded-full p-2 text-2xl text-slate-400 opacity-80 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
-                        >
+                        <span className="rounded-full p-2 text-2xl text-slate-400 opacity-80 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100">
                           &#8942;
-                        </button>
-                      </article>
+                        </span>
+                      </button>
                     ))
                   ) : (
                     <p className="py-5 text-sm text-slate-500">No classwork available yet.</p>

@@ -216,6 +216,20 @@ def _ensure_faculty_message_attachment_columns():
             db.session.commit()
 
 
+def _ensure_assignment_classroom_column():
+    table = db.session.execute(
+        text("SELECT name FROM sqlite_master WHERE type='table' AND name='assignment'")
+    ).fetchone()
+    if not table:
+        return
+
+    columns = db.session.execute(text("PRAGMA table_info(assignment)")).fetchall()
+    column_names = [col[1] for col in columns]
+    if "classroom_id" not in column_names:
+        db.session.execute(text("ALTER TABLE assignment ADD COLUMN classroom_id INTEGER"))
+        db.session.commit()
+
+
 def _ensure_default_rooms():
     if Room.query.count() > 0:
         return
@@ -262,6 +276,7 @@ def create_app():
         _ensure_faculty_preference_columns()
         _ensure_support_query_attachment_columns()
         _ensure_assignment_submission_review_columns()
+        _ensure_assignment_classroom_column()
         _ensure_classroom_link_columns()
         _ensure_faculty_message_attachment_columns()
         _ensure_default_rooms()

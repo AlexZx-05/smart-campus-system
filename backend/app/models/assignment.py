@@ -5,6 +5,7 @@ from app.extensions import db
 class Assignment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     created_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    classroom_id = db.Column(db.Integer, db.ForeignKey("classroom.id"), nullable=True, index=True)
     title = db.Column(db.String(200), nullable=False)
     subject = db.Column(db.String(120), nullable=False, index=True)
     description = db.Column(db.Text, nullable=True)
@@ -21,4 +22,3 @@ class Assignment(db.Model):
     attachment_mime = db.Column(db.String(120), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-

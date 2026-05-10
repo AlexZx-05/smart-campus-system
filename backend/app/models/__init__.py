@@ -19,3 +19,4 @@ from .course_enrollment import CourseEnrollment
 from .classroom import Classroom
 from .classroom_membership import ClassroomMembership
 from .classroom_access_email import ClassroomAccessEmail
+from .faculty_absence import FacultyAbsence

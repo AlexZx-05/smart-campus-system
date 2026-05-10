@@ -116,6 +116,23 @@ const PreferenceService = {
     return response.data;
   },
 
+  getAdminFacultyAbsences: async (date) => {
+    const response = await API.get("/admin/faculty-absences", {
+      params: date ? { date } : {},
+    });
+    return response.data;
+  },
+
+  createAdminFacultyAbsence: async (payload) => {
+    const response = await API.post("/admin/faculty-absences", payload);
+    return response.data;
+  },
+
+  updateAdminFacultyAbsence: async (absenceId, payload) => {
+    const response = await API.patch(`/admin/faculty-absences/${absenceId}`, payload);
+    return response.data;
+  },
+
   getAdminClassrooms: async () => {
     const response = await API.get("/admin/classrooms");
     return response.data;

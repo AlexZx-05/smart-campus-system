@@ -83,6 +83,16 @@ function AdminDashboard({ onLogout }) {
   const [userSearch, setUserSearch] = useState("");
   const [editingUserId, setEditingUserId] = useState(null);
   const [userEditForm, setUserEditForm] = useState({});
+  const [facultyAbsences, setFacultyAbsences] = useState([]);
+  const [loadingFacultyAbsences, setLoadingFacultyAbsences] = useState(false);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [absenceForm, setAbsenceForm] = useState({
+    faculty_id: "",
+    absent_date: todayIso,
+    substitute_faculty_id: "",
+    replacement_room: "",
+    reason: "",
+  });
   const [adminMessages, setAdminMessages] = useState([]);
   const [loadingAdminMessages, setLoadingAdminMessages] = useState(false);
   const [messageRecipientFilter, setMessageRecipientFilter] = useState("");
@@ -325,7 +335,10 @@ function AdminDashboard({ onLogout }) {
       loadRoomOccupancy();
       loadRoomLiveStatus();
     }
-    if (activePage === "users") loadUsers();
+    if (activePage === "users") {
+      loadUsers();
+      loadFacultyAbsences();
+    }
     if (activePage === "messages") {
       loadAdminMessages();
       loadSupportQueries();
@@ -453,6 +466,19 @@ function AdminDashboard({ onLogout }) {
       setPreferencesError(err.response?.data?.message || "Failed to load users.");
     } finally {
       setLoadingUsers(false);
+    }
+  };
+
+  const loadFacultyAbsences = async () => {
+    setLoadingFacultyAbsences(true);
+    setPreferencesError("");
+    try {
+      const data = await PreferenceService.getAdminFacultyAbsences();
+      setFacultyAbsences(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to load faculty absences.");
+    } finally {
+      setLoadingFacultyAbsences(false);
     }
   };
 
@@ -1055,6 +1081,49 @@ function AdminDashboard({ onLogout }) {
       await loadUsers();
     } catch (err) {
       setPreferencesError(err.response?.data?.message || "Failed to update login access.");
+    }
+  };
+
+  const handleAbsenceInput = (e) => {
+    const { name, value } = e.target;
+    setAbsenceForm((prev) => ({ ...prev, [name]: value }));
+    setPreferencesError("");
+    setTimetableMessage("");
+  };
+
+  const markFacultyAbsent = async (e) => {
+    e.preventDefault();
+    setPreferencesError("");
+    setTimetableMessage("");
+    try {
+      const payload = {
+        faculty_id: Number(absenceForm.faculty_id),
+        absent_date: absenceForm.absent_date,
+        substitute_faculty_id: absenceForm.substitute_faculty_id ? Number(absenceForm.substitute_faculty_id) : undefined,
+        replacement_room: (absenceForm.replacement_room || "").trim() || undefined,
+        reason: (absenceForm.reason || "").trim() || undefined,
+      };
+      const res = await PreferenceService.createAdminFacultyAbsence(payload);
+      setTimetableMessage(res.message || "Faculty absence marked successfully.");
+      setAbsenceForm((prev) => ({
+        ...prev,
+        substitute_faculty_id: "",
+        replacement_room: "",
+        reason: "",
+      }));
+      await loadFacultyAbsences();
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to mark faculty absence.");
+    }
+  };
+
+  const clearFacultyAbsence = async (absenceId) => {
+    try {
+      const res = await PreferenceService.updateAdminFacultyAbsence(absenceId, { is_active: false });
+      setTimetableMessage(res.message || "Faculty absence cleared.");
+      await loadFacultyAbsences();
+    } catch (err) {
+      setPreferencesError(err.response?.data?.message || "Failed to clear absence.");
     }
   };
 
@@ -3479,6 +3548,8 @@ function AdminDashboard({ onLogout }) {
         faculty: users.filter((u) => u.role === "faculty").length,
         admin: users.filter((u) => u.role === "admin").length,
       };
+      const facultyRows = users.filter((u) => u.role === "faculty");
+      const activeAbsenceRows = (facultyAbsences || []).filter((row) => row.is_active);
       return (
         <div className="space-y-4">
           <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50/30 p-6 shadow-sm dark:border-slate-700 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-900 dark:to-slate-800/70">
@@ -3533,6 +3604,133 @@ function AdminDashboard({ onLogout }) {
               <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 dark:border-violet-800 dark:bg-violet-950/30">
                 <p className="text-[11px] uppercase tracking-[0.08em] text-violet-700 dark:text-violet-300">Admin</p>
                 <p className="mt-1 text-xl font-bold text-violet-700 dark:text-violet-300">{userRoleStats.admin}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-amber-200 bg-gradient-to-br from-white via-amber-50/40 to-rose-50/40 p-4 shadow-sm dark:border-amber-900/50 dark:from-slate-900 dark:via-amber-950/10 dark:to-rose-950/10">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-base font-semibold text-slate-900 dark:text-slate-100">Faculty Absence Management</h4>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                    Mark absent faculty, assign substitute teacher, and optionally override room. Students will see the updated class owner in timetable.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadFacultyAbsences}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                >
+                  Refresh Absences
+                </button>
+              </div>
+
+              <form onSubmit={markFacultyAbsent} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Faculty</span>
+                  <select
+                    name="faculty_id"
+                    value={absenceForm.faculty_id}
+                    onChange={handleAbsenceInput}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    required
+                  >
+                    <option value="">Select faculty</option>
+                    {facultyRows.map((row) => (
+                      <option key={`absence-fac-${row.id}`} value={row.id}>
+                        {row.name} ({row.email})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Absent Date</span>
+                  <input
+                    type="date"
+                    name="absent_date"
+                    value={absenceForm.absent_date}
+                    onChange={handleAbsenceInput}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    required
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Substitute Faculty (Optional)</span>
+                  <select
+                    name="substitute_faculty_id"
+                    value={absenceForm.substitute_faculty_id}
+                    onChange={handleAbsenceInput}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    <option value="">No substitute</option>
+                    {facultyRows
+                      .filter((row) => String(row.id) !== String(absenceForm.faculty_id))
+                      .map((row) => (
+                        <option key={`absence-sub-${row.id}`} value={row.id}>
+                          {row.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Replacement Room (Optional)</span>
+                  <input
+                    name="replacement_room"
+                    value={absenceForm.replacement_room}
+                    onChange={handleAbsenceInput}
+                    placeholder="e.g., B-202"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </label>
+                <label className="block md:col-span-2 xl:col-span-1">
+                  <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">Reason (Optional)</span>
+                  <input
+                    name="reason"
+                    value={absenceForm.reason}
+                    onChange={handleAbsenceInput}
+                    placeholder="Medical leave / official duty"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  />
+                </label>
+                <div className="md:col-span-2 xl:col-span-5 flex justify-end">
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-700"
+                  >
+                    Mark Faculty Absent
+                  </button>
+                </div>
+              </form>
+
+              <div className="mt-4">
+                {loadingFacultyAbsences ? (
+                  <p className="text-sm text-slate-500">Loading absence records...</p>
+                ) : activeAbsenceRows.length === 0 ? (
+                  <p className="text-sm text-slate-500">No active faculty absences.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {activeAbsenceRows.map((row) => (
+                      <div key={`absence-row-${row.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-900/50">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {row.faculty_name} | {row.absent_date}
+                          </p>
+                          <p className="truncate text-xs text-slate-600 dark:text-slate-300">
+                            {row.substitute_faculty_name ? `Substitute: ${row.substitute_faculty_name}` : "No substitute assigned"}
+                            {row.replacement_room ? ` | Room: ${row.replacement_room}` : ""}
+                            {row.reason ? ` | Reason: ${row.reason}` : ""}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => clearFacultyAbsence(row.id)}
+                          className="rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-900/20 dark:text-rose-300"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

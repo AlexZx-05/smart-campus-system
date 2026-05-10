@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PreferenceService from "../../services/PreferenceService";
 
 const defaultForm = {
@@ -39,6 +39,31 @@ const labelMap = {
 };
 
 const formatStatus = (status = "open") => status.replace("_", " ");
+const formatFullDateTime = (value) => {
+  const ts = new Date(value || 0).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return "-";
+  return new Date(ts).toLocaleString([], {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
+const formatRealtimeLabel = (value, nowMs) => {
+  const ts = new Date(value || 0).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return "";
+  const diffSec = Math.max(0, Math.floor((nowMs - ts) / 1000));
+  if (diffSec < 10) return "just now";
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+};
 
 function QueryAttachmentPreview({ query }) {
   if (!query?.attachment_url) return null;
@@ -82,6 +107,15 @@ function Queries() {
   const [loadingFacultyDirectory, setLoadingFacultyDirectory] = useState(false);
   const [teacherMessageForm, setTeacherMessageForm] = useState(defaultTeacherMessageForm);
   const [sendingTeacherMessage, setSendingTeacherMessage] = useState(false);
+  const [teacherThreadReply, setTeacherThreadReply] = useState("");
+  const [teacherThreadAttachment, setTeacherThreadAttachment] = useState(null);
+  const [showThreadAttachmentMenu, setShowThreadAttachmentMenu] = useState(false);
+  const [nowMs, setNowMs] = useState(Date.now());
+  const teacherConnectSectionRef = useRef(null);
+  const supportSectionRef = useRef(null);
+  const [teacherInbox, setTeacherInbox] = useState([]);
+  const [loadingTeacherInbox, setLoadingTeacherInbox] = useState(false);
+  const [selectedTeacherThreadId, setSelectedTeacherThreadId] = useState(null);
 
   const loadQueries = async () => {
     setLoadingQueries(true);
@@ -113,9 +147,22 @@ function Queries() {
     }
   };
 
+  const loadTeacherInbox = async () => {
+    setLoadingTeacherInbox(true);
+    try {
+      const data = await PreferenceService.getFacultyPeerInbox();
+      setTeacherInbox(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setTeacherInbox([]);
+    } finally {
+      setLoadingTeacherInbox(false);
+    }
+  };
+
   useEffect(() => {
     loadQueries();
     loadFacultyDirectory();
+    loadTeacherInbox();
   }, []);
 
   useEffect(() => {
@@ -139,6 +186,24 @@ function Queries() {
     setAttachmentPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [form.attachment]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let focusTarget = "";
+    try {
+      focusTarget = sessionStorage.getItem("student_queries_focus") || "";
+      if (focusTarget) sessionStorage.removeItem("student_queries_focus");
+    } catch (_) {}
+    if (!focusTarget) return;
+    const targetRef = focusTarget === "teacher" ? teacherConnectSectionRef : supportSectionRef;
+    setTimeout(() => {
+      targetRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+  }, []);
 
   const repliedQueries = useMemo(
     () =>
@@ -179,6 +244,44 @@ function Queries() {
       return searchableText.includes(keyword);
     });
   }, [queries, historySearch, historyStatusFilter]);
+  const teacherChatThreads = useMemo(() => {
+    const map = new Map();
+    (teacherInbox || []).forEach((msg) => {
+      const senderRole = String(msg?.sender_role || "").toLowerCase();
+      const recipientRole = String(msg?.recipient_role || "").toLowerCase();
+      const isOutgoing = senderRole === "student";
+      const peerId = Number(isOutgoing ? msg?.recipient_id : msg?.sender_id);
+      const peerRole = isOutgoing ? recipientRole : senderRole;
+      if (!peerId || peerRole !== "faculty") return;
+      const peerName = (isOutgoing ? msg?.recipient_name : msg?.sender_name) || "Teacher";
+      const peerEmail = (isOutgoing ? msg?.recipient_email : msg?.sender_email) || "";
+      const existing = map.get(peerId) || {
+        id: peerId,
+        name: peerName,
+        email: peerEmail,
+        preview: "",
+        latestMs: 0,
+        messages: [],
+      };
+      existing.messages.push(msg);
+      const ts = new Date(msg?.created_at || 0).getTime();
+      if (Number.isFinite(ts) && ts >= existing.latestMs) {
+        existing.latestMs = ts;
+        existing.preview = msg?.body || "";
+      }
+      map.set(peerId, existing);
+    });
+    return [...map.values()]
+      .map((thread) => ({
+        ...thread,
+        messages: [...thread.messages].sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()),
+      }))
+      .sort((a, b) => b.latestMs - a.latestMs);
+  }, [teacherInbox]);
+  const selectedTeacherThread = useMemo(
+    () => teacherChatThreads.find((thread) => Number(thread.id) === Number(selectedTeacherThreadId)) || teacherChatThreads[0] || null,
+    [teacherChatThreads, selectedTeacherThreadId]
+  );
 
   const handleFormChange = (e) => {
     const { name, value, files, type } = e.target;
@@ -247,6 +350,8 @@ function Queries() {
       const res = await PreferenceService.sendFacultyPeerMessage(payload);
       setSuccess(res.message || "Message sent to teacher.");
       setTeacherMessageForm(defaultTeacherMessageForm);
+      await loadTeacherInbox();
+      if (payload.recipient_id) setSelectedTeacherThreadId(payload.recipient_id);
     } catch (err) {
       setError(err.response?.data?.message || "Failed to send message to teacher.");
     } finally {
@@ -271,14 +376,14 @@ function Queries() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-indigo-50/25 p-5 shadow-sm ring-1 ring-indigo-100/50">
+      <section ref={teacherConnectSectionRef} className="rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-emerald-50/25 p-5 shadow-sm ring-1 ring-emerald-100/60">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-indigo-700">Teacher Connect</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-emerald-700">Teacher Connect</p>
             <h3 className="mt-1 text-lg font-semibold text-slate-800">Message a Teacher</h3>
-            <p className="mt-1 text-sm text-slate-500">Send a direct academic message to an existing faculty member.</p>
+            <p className="mt-1 text-sm text-slate-500">Send your academic doubt directly to a faculty member.</p>
           </div>
-          <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
             Faculty {facultyDirectory.length}
           </span>
         </div>
@@ -290,7 +395,7 @@ function Queries() {
               name="recipient_id"
               value={teacherMessageForm.recipient_id}
               onChange={handleTeacherMessageChange}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
               required
             >
               <option value="">{loadingFacultyDirectory ? "Loading faculty..." : "Select teacher"}</option>
@@ -301,17 +406,19 @@ function Queries() {
               ))}
             </select>
           </div>
+
           <div>
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-600">Subject</label>
             <input
               name="subject"
               value={teacherMessageForm.subject}
               onChange={handleTeacherMessageChange}
-              placeholder="Question about assignment / topic"
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              placeholder="Topic or doubt summary"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
               required
             />
           </div>
+
           <div className="md:col-span-2">
             <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-slate-600">Message</label>
             <textarea
@@ -319,24 +426,242 @@ function Queries() {
               rows={3}
               value={teacherMessageForm.body}
               onChange={handleTeacherMessageChange}
-              placeholder="Write your message to the teacher..."
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              placeholder="Write your message..."
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
               required
             />
           </div>
+
           <div className="md:col-span-2 flex justify-end">
             <button
               type="submit"
               disabled={sendingTeacherMessage || loadingFacultyDirectory || facultyDirectory.length === 0}
-              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {sendingTeacherMessage ? "Sending..." : "Send Message to Teacher"}
+              {sendingTeacherMessage ? "Sending..." : "Send to Teacher"}
             </button>
           </div>
         </form>
       </section>
 
-      <section className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-12">
+      <section className="rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-cyan-50/25 p-5 shadow-sm ring-1 ring-cyan-100/60">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-700">Teacher Chat</p>
+            <h3 className="mt-1 text-lg font-semibold text-slate-800">Teacher Replies</h3>
+            <p className="mt-1 text-sm text-slate-500">Track conversation updates and replies from your teachers.</p>
+          </div>
+          <button
+            type="button"
+            onClick={loadTeacherInbox}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:bg-slate-50"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <aside className="rounded-xl border border-slate-200 bg-white p-3 lg:col-span-4">
+            <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+              {loadingTeacherInbox ? (
+                <p className="px-2 py-3 text-sm text-slate-500">Loading conversations...</p>
+              ) : teacherChatThreads.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                  No teacher conversations yet.
+                </p>
+              ) : (
+                teacherChatThreads.map((thread) => {
+                  const isActive = Number(selectedTeacherThread?.id) === Number(thread.id);
+                  const previewTime = thread.latestMs ? formatRealtimeLabel(thread.latestMs, nowMs) : "";
+                  return (
+                    <button
+                      key={`thread-${thread.id}`}
+                      type="button"
+                      onClick={() => setSelectedTeacherThreadId(thread.id)}
+                      className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
+                        isActive
+                          ? "border-cyan-300 bg-cyan-50 shadow-[inset_3px_0_0_0_#0891b2]"
+                          : "border-transparent hover:border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate text-sm font-semibold text-slate-900">{thread.name}</p>
+                        <p className="text-[11px] text-slate-400" title={formatFullDateTime(thread.latestMs)}>{previewTime}</p>
+                      </div>
+                      <p className="truncate text-xs text-slate-500">{thread.preview || "No preview"}</p>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </aside>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3 lg:col-span-8">
+            {!selectedTeacherThread ? (
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                Select a teacher conversation to view messages.
+              </div>
+            ) : (
+              <div className="flex min-h-[360px] flex-col">
+                <div className="border-b border-slate-200 pb-2">
+                  <p className="text-sm font-semibold text-slate-900">{selectedTeacherThread.name}</p>
+                  <p className="text-xs text-slate-500">{selectedTeacherThread.email || "Faculty"}</p>
+                </div>
+                <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                  {selectedTeacherThread.messages.map((msg) => {
+                    const isStudent = String(msg?.sender_role || "").toLowerCase() === "student";
+                    return (
+                      <div key={`teacher-msg-${msg.id}`} className={`flex ${isStudent ? "justify-end" : "justify-start"}`}>
+                        <div
+                          className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
+                            isStudent ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-800"
+                          }`}
+                        >
+                          <p className="whitespace-pre-wrap">{msg.body}</p>
+                          <p className={`mt-1 text-[11px] ${isStudent ? "text-cyan-100" : "text-slate-500"}`}>
+                            {formatRealtimeLabel(msg.created_at, nowMs)} | {formatFullDateTime(msg.created_at)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <form
+                  className="mt-3 border-t border-slate-200 pt-3"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const body = teacherThreadReply.trim();
+                    if ((!body && !teacherThreadAttachment) || !selectedTeacherThread?.id || sendingTeacherMessage) return;
+                    setSendingTeacherMessage(true);
+                    setSuccess("");
+                    setError("");
+                    try {
+                      let payload;
+                      if (teacherThreadAttachment) {
+                        payload = new FormData();
+                        payload.append("recipient_id", String(Number(selectedTeacherThread.id)));
+                        payload.append("subject", "Student Follow-up");
+                        payload.append("body", body);
+                        payload.append("attachment", teacherThreadAttachment);
+                      } else {
+                        payload = {
+                          recipient_id: Number(selectedTeacherThread.id),
+                          subject: "Student Follow-up",
+                          body,
+                        };
+                      }
+                      const res = await PreferenceService.sendFacultyPeerMessage(payload);
+                      setSuccess(res.message || "Message sent to teacher.");
+                      setTeacherThreadReply("");
+                      setTeacherThreadAttachment(null);
+                      setShowThreadAttachmentMenu(false);
+                      await loadTeacherInbox();
+                      setSelectedTeacherThreadId(Number(selectedTeacherThread.id));
+                    } catch (err) {
+                      setError(err.response?.data?.message || "Failed to send message to teacher.");
+                    } finally {
+                      setSendingTeacherMessage(false);
+                    }
+                  }}
+                >
+                  <input
+                    id="teacher-thread-photo-input"
+                    type="file"
+                    accept="image/*,video/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      if (file) setTeacherThreadAttachment(file);
+                      setShowThreadAttachmentMenu(false);
+                      e.target.value = "";
+                    }}
+                  />
+                  <input
+                    id="teacher-thread-doc-input"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip,.rar,application/*,text/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      if (file) setTeacherThreadAttachment(file);
+                      setShowThreadAttachmentMenu(false);
+                      e.target.value = "";
+                    }}
+                  />
+                  {teacherThreadAttachment && (
+                    <div className="mb-2 flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                      <span className="truncate pr-2">{teacherThreadAttachment.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setTeacherThreadAttachment(null)}
+                        className="rounded border border-red-200 px-2 py-0.5 text-red-700 hover:bg-red-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+                    <div className="flex items-end gap-2">
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowThreadAttachmentMenu((prev) => !prev)}
+                        aria-label="Add attachment"
+                        className="flex h-11 w-11 items-center justify-center rounded-xl border border-cyan-200 bg-cyan-50 text-cyan-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-cyan-100"
+                      >
+                        <span className="text-lg font-semibold leading-none">+</span>
+                      </button>
+                      {showThreadAttachmentMenu && (
+                        <div className="absolute bottom-12 left-0 z-20 w-48 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                          <label
+                            htmlFor="teacher-thread-photo-input"
+                            className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-cyan-50"
+                          >
+                            <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-cyan-100 text-cyan-700">
+                              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-current" aria-hidden="true">
+                                <path d="M5 3a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5Zm14 12H8.83l2.58-3.22a1 1 0 0 1 1.54-.04L15 14.5l1.6-2a1 1 0 0 1 1.55.03L19 13.8V15ZM9 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
+                              </svg>
+                            </span>
+                            Photo / Video
+                          </label>
+                          <label
+                            htmlFor="teacher-thread-doc-input"
+                            className="mt-1 flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-700 transition hover:bg-cyan-50"
+                          >
+                            <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-cyan-100 text-cyan-700">
+                              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-current" aria-hidden="true">
+                                <path d="M7 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5a2 2 0 0 0-.59-1.41l-4.5-4.5A2 2 0 0 0 12.5 2H7Zm5 1.5V8a1 1 0 0 0 1 1h4.5L12 3.5Z" />
+                              </svg>
+                            </span>
+                            Document
+                          </label>
+                        </div>
+                      )}
+                    </div>
+                    <textarea
+                      rows={1}
+                      value={teacherThreadReply}
+                      onChange={(e) => setTeacherThreadReply(e.target.value)}
+                      placeholder="Type your message"
+                      className="max-h-24 min-h-[44px] flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:bg-white focus:ring-2 focus:ring-cyan-100"
+                    />
+                    <button
+                      type="submit"
+                      disabled={sendingTeacherMessage || (!teacherThreadReply.trim() && !teacherThreadAttachment)}
+                      className="rounded-xl bg-cyan-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {sendingTeacherMessage ? "Sending..." : "Send"}
+                    </button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section ref={supportSectionRef} className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-12">
         <div className="relative overflow-hidden rounded-2xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50 to-blue-50/25 p-5 shadow-sm ring-1 ring-blue-100/50 xl:col-span-8 xl:h-[540px]">
           <div className="pointer-events-none absolute -right-12 -top-12 h-36 w-36 rounded-full bg-blue-200/20 blur-3xl" />
           <div className="flex h-full min-h-0 flex-col">

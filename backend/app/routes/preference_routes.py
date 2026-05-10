@@ -26,6 +26,7 @@ from app.models import (
     FacultyChatGroupMember,
     FacultyChatGroupMessage,
     FacultyPeerMessage,
+    FacultyAbsence,
     Room,
     SupportQuery,
     StudentSetting,
@@ -267,6 +268,97 @@ def _serialize_timetable_slot(slot):
     }
 
 
+def _serialize_faculty_absence(row):
+    faculty = User.query.get(row.faculty_id)
+    substitute = User.query.get(row.substitute_faculty_id) if row.substitute_faculty_id else None
+    creator = User.query.get(row.created_by) if row.created_by else None
+    return {
+        "id": row.id,
+        "faculty_id": row.faculty_id,
+        "faculty_name": faculty.name if faculty else "Faculty",
+        "faculty_email": faculty.email if faculty else None,
+        "absent_date": row.absent_date.isoformat() if row.absent_date else None,
+        "start_time": row.start_time,
+        "end_time": row.end_time,
+        "substitute_faculty_id": row.substitute_faculty_id,
+        "substitute_faculty_name": substitute.name if substitute else None,
+        "substitute_faculty_email": substitute.email if substitute else None,
+        "replacement_room": row.replacement_room,
+        "reason": row.reason,
+        "is_active": bool(row.is_active),
+        "created_by": row.created_by,
+        "created_by_name": creator.name if creator else "Admin",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _apply_faculty_absence_overrides(serialized_slots, target_date):
+    if not serialized_slots or not target_date:
+        return serialized_slots
+    day_name = target_date.strftime("%A")
+    absences = (
+        FacultyAbsence.query
+        .filter(
+            FacultyAbsence.absent_date == target_date,
+            FacultyAbsence.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
+    if not absences:
+        return serialized_slots
+
+    absence_by_faculty = {}
+    for row in absences:
+        absence_by_faculty.setdefault(row.faculty_id, []).append(row)
+
+    def _slot_matches_absence(slot_item, absence_row):
+        if (slot_item.get("day") or "") != day_name:
+            return False
+        slot_start = _time_to_minutes(slot_item.get("start_time"))
+        slot_end = _time_to_minutes(slot_item.get("end_time"))
+        if slot_start is None or slot_end is None:
+            return True
+        if absence_row.start_time and absence_row.end_time:
+            abs_start = _time_to_minutes(absence_row.start_time)
+            abs_end = _time_to_minutes(absence_row.end_time)
+            if abs_start is None or abs_end is None:
+                return True
+            return slot_start < abs_end and abs_start < slot_end
+        return True
+
+    updated = []
+    for slot in serialized_slots:
+        faculty_id = slot.get("faculty_id")
+        matched = None
+        for row in absence_by_faculty.get(faculty_id, []):
+            if _slot_matches_absence(slot, row):
+                matched = row
+                break
+        if not matched:
+            updated.append(slot)
+            continue
+
+        substitute = User.query.get(matched.substitute_faculty_id) if matched.substitute_faculty_id else None
+        replaced = dict(slot)
+        replaced["original_faculty_id"] = slot.get("faculty_id")
+        replaced["original_faculty_name"] = slot.get("faculty_name")
+        replaced["faculty_absent"] = True
+        replaced["absence_reason"] = matched.reason
+        if substitute:
+            replaced["faculty_id"] = substitute.id
+            replaced["faculty_name"] = substitute.name
+            replaced["faculty_email"] = substitute.email
+            replaced["is_substitute_slot"] = True
+            replaced["substitute_faculty_id"] = substitute.id
+            replaced["substitute_faculty_name"] = substitute.name
+        else:
+            replaced["is_substitute_slot"] = False
+        if matched.replacement_room:
+            replaced["room"] = matched.replacement_room
+        updated.append(replaced)
+    return updated
+
+
 def _build_timetable_slot_from_preference(pref, room_name=None, room_capacity=None):
     room = _select_room(pref.student_count)
     resolved_room = room_name or room["name"]
@@ -390,6 +482,36 @@ def _serialize_classroom_invite_notification(classroom, faculty, created_at_over
     }
 
 
+def _serialize_assignment_notification(assignment, faculty):
+    class_scope = " / ".join(
+        [
+            assignment.department or "-",
+            str(assignment.year or "-"),
+            assignment.section or "-",
+        ]
+    )
+    due_text = assignment.due_at.strftime("%d %b %Y, %I:%M %p") if assignment.due_at else "No due date"
+    return {
+        "id": f"assignment-notice-{assignment.id}",
+        "sender_id": faculty.id if faculty else assignment.created_by,
+        "sender_name": faculty.name if faculty else "Faculty",
+        "recipient_role": "student",
+        "subject": f"New Assignment: {assignment.title}",
+        "body": (
+            f"A new assignment has been posted.\n"
+            f"Title: {assignment.title}\n"
+            f"Subject: {assignment.subject}\n"
+            f"Class: {class_scope}\n"
+            f"Due: {due_text}"
+        ),
+        "created_at": assignment.created_at.isoformat() if assignment.created_at else None,
+        "kind": "assignment_notice",
+        "assignment_id": assignment.id,
+        "classroom_id": assignment.classroom_id,
+        "due_at": assignment.due_at.isoformat() if assignment.due_at else None,
+    }
+
+
 def _serialize_faculty_directory_user(user):
     image_url = None
     if user.profile_image:
@@ -414,9 +536,11 @@ def _serialize_faculty_peer_message(row):
     return {
         "id": row.id,
         "sender_id": row.sender_id,
+        "sender_role": sender.role if sender else None,
         "sender_name": sender.name if sender else "Faculty",
         "sender_email": sender.email if sender else None,
         "recipient_id": row.recipient_id,
+        "recipient_role": recipient.role if recipient else None,
         "recipient_name": recipient.name if recipient else "Faculty",
         "recipient_email": recipient.email if recipient else None,
         "subject": row.subject,
@@ -799,6 +923,7 @@ def _serialize_assignment(row, student=None):
 
     payload = {
         "id": row.id,
+        "classroom_id": row.classroom_id,
         "title": row.title,
         "subject": row.subject,
         "description": row.description,
@@ -991,6 +1116,18 @@ def _is_student_enrolled_for_assignment(student_id, assignment):
 def _is_student_joined_relevant_classroom(student_id, assignment):
     if not student_id or not assignment:
         return False
+
+    if assignment.classroom_id:
+        joined = ClassroomMembership.query.filter(
+            ClassroomMembership.classroom_id == assignment.classroom_id,
+            ClassroomMembership.student_id == student_id,
+        ).first()
+        if not joined:
+            return False
+        room = Classroom.query.get(assignment.classroom_id)
+        if not room or not room.is_active:
+            return False
+        return True
 
     query = (
         ClassroomMembership.query
@@ -2656,13 +2793,15 @@ def get_student_timetable():
         query = query.filter(TimetableSlot.semester == semester)
 
     slots = query.order_by(TimetableSlot.day.asc(), TimetableSlot.start_time.asc()).all()
+    serialized = [_serialize_timetable_slot(slot) for slot in slots]
+    serialized = _apply_faculty_absence_overrides(serialized, datetime.now().date())
     return jsonify({
         "student": {
             "department": user.department,
             "year": user.year,
             "section": user.section,
         },
-        "timetable": [_serialize_timetable_slot(slot) for slot in slots],
+        "timetable": serialized,
     }), 200
 
 
@@ -2684,7 +2823,9 @@ def get_institute_timetable():
         TimetableSlot.day.asc(),
         TimetableSlot.start_time.asc(),
     ).all()
-    return jsonify([_serialize_timetable_slot(slot) for slot in slots]), 200
+    serialized = [_serialize_timetable_slot(slot) for slot in slots]
+    serialized = _apply_faculty_absence_overrides(serialized, datetime.now().date())
+    return jsonify(serialized), 200
 
 
 @preference_bp.route("/api/student/rooms/live-status", methods=["GET"])
@@ -3056,6 +3197,122 @@ def get_admin_classrooms():
     return jsonify([_serialize_classroom(row) for row in rows]), 200
 
 
+@preference_bp.route("/api/admin/faculty-absences", methods=["GET"])
+@jwt_required()
+def get_admin_faculty_absences():
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    date_text = (request.args.get("date") or "").strip()
+    query = FacultyAbsence.query
+    if date_text:
+        try:
+            target_date = datetime.strptime(date_text, "%Y-%m-%d").date()
+            query = query.filter(FacultyAbsence.absent_date == target_date)
+        except ValueError:
+            return jsonify({"message": "date must be YYYY-MM-DD"}), 400
+    rows = query.order_by(FacultyAbsence.absent_date.desc(), FacultyAbsence.created_at.desc()).all()
+    return jsonify([_serialize_faculty_absence(row) for row in rows]), 200
+
+
+@preference_bp.route("/api/admin/faculty-absences", methods=["POST"])
+@jwt_required()
+def create_admin_faculty_absence():
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    data = request.get_json() or {}
+    faculty_id = _parse_int(data.get("faculty_id"))
+    substitute_faculty_id = _parse_int(data.get("substitute_faculty_id"))
+    absent_date_text = (data.get("absent_date") or "").strip()
+    reason = (data.get("reason") or "").strip() or None
+    start_time = (data.get("start_time") or "").strip() or None
+    end_time = (data.get("end_time") or "").strip() or None
+    replacement_room = (data.get("replacement_room") or "").strip() or None
+
+    if not faculty_id:
+        return jsonify({"message": "faculty_id is required"}), 400
+    if not absent_date_text:
+        return jsonify({"message": "absent_date is required (YYYY-MM-DD)"}), 400
+    try:
+        absent_date = datetime.strptime(absent_date_text, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"message": "absent_date must be YYYY-MM-DD"}), 400
+
+    faculty = User.query.get(faculty_id)
+    if not faculty or faculty.role != "faculty":
+        return jsonify({"message": "Faculty not found"}), 404
+
+    substitute = None
+    if substitute_faculty_id:
+        substitute = User.query.get(substitute_faculty_id)
+        if not substitute or substitute.role != "faculty":
+            return jsonify({"message": "Substitute faculty not found"}), 404
+        if substitute.id == faculty.id:
+            return jsonify({"message": "Substitute faculty must be different from absent faculty"}), 400
+
+    if (start_time and not end_time) or (end_time and not start_time):
+        return jsonify({"message": "Provide both start_time and end_time together"}), 400
+    if start_time and end_time:
+        start_min = _time_to_minutes(start_time)
+        end_min = _time_to_minutes(end_time)
+        if start_min is None or end_min is None or end_min <= start_min:
+            return jsonify({"message": "Invalid start_time/end_time range"}), 400
+
+    duplicate = FacultyAbsence.query.filter(
+        FacultyAbsence.faculty_id == faculty.id,
+        FacultyAbsence.absent_date == absent_date,
+        FacultyAbsence.start_time == start_time,
+        FacultyAbsence.end_time == end_time,
+        FacultyAbsence.is_active == True,  # noqa: E712
+    ).first()
+    if duplicate:
+        return jsonify({"message": "Absence already marked for this faculty/date/time"}), 400
+
+    row = FacultyAbsence(
+        faculty_id=faculty.id,
+        absent_date=absent_date,
+        start_time=start_time,
+        end_time=end_time,
+        substitute_faculty_id=substitute.id if substitute else None,
+        replacement_room=replacement_room,
+        reason=reason,
+        is_active=True,
+        created_by=user.id,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({"message": "Faculty absence marked successfully.", "data": _serialize_faculty_absence(row)}), 201
+
+
+@preference_bp.route("/api/admin/faculty-absences/<int:absence_id>", methods=["PATCH"])
+@jwt_required()
+def update_admin_faculty_absence(absence_id):
+    user = _get_current_user()
+    if not user or user.role != "admin":
+        return jsonify({"message": "Forbidden"}), 403
+
+    row = FacultyAbsence.query.get(absence_id)
+    if not row:
+        return jsonify({"message": "Absence record not found"}), 404
+
+    data = request.get_json() or {}
+    if "is_active" in data:
+        try:
+            row.is_active = _to_bool(data.get("is_active"))
+        except ValueError:
+            return jsonify({"message": "is_active must be true or false"}), 400
+    if "reason" in data:
+        row.reason = (data.get("reason") or "").strip() or None
+    if "replacement_room" in data:
+        row.replacement_room = (data.get("replacement_room") or "").strip() or None
+
+    db.session.commit()
+    return jsonify({"message": "Absence record updated.", "data": _serialize_faculty_absence(row)}), 200
+
+
 @preference_bp.route("/api/admin/messages", methods=["GET"])
 @jwt_required()
 def get_admin_messages():
@@ -3146,6 +3403,17 @@ def get_role_inbox_messages():
                 ).first()
             created_at = invite_row.created_at if invite_row and invite_row.created_at else classroom.created_at
             payload.append(_serialize_classroom_invite_notification(classroom, faculty, created_at))
+
+        assignment_rows = (
+            Assignment.query
+            .order_by(Assignment.created_at.desc())
+            .all()
+        )
+        for assignment in assignment_rows:
+            if not _is_assignment_visible_to_student(assignment, user):
+                continue
+            faculty = User.query.get(assignment.created_by)
+            payload.append(_serialize_assignment_notification(assignment, faculty))
         payload.sort(key=lambda item: item.get("created_at") or "", reverse=True)
 
     return jsonify(payload), 200
@@ -3211,8 +3479,12 @@ def create_faculty_peer_message():
         return jsonify({"message": "body or attachment is required"}), 400
 
     recipient = User.query.get(recipient_id)
-    if not recipient or recipient.role != "faculty":
-        return jsonify({"message": "Recipient faculty not found"}), 404
+    if not recipient:
+        return jsonify({"message": "Recipient not found"}), 404
+    if user.role == "student" and recipient.role != "faculty":
+        return jsonify({"message": "Students can message faculty only"}), 403
+    if user.role == "faculty" and recipient.role not in {"faculty", "student"}:
+        return jsonify({"message": "Faculty can message only faculty or students"}), 403
 
     row = FacultyPeerMessage(
         sender_id=user.id,
@@ -3225,7 +3497,8 @@ def create_faculty_peer_message():
     )
     db.session.add(row)
     db.session.commit()
-    return jsonify({"message": "Message sent to faculty.", "data": _serialize_faculty_peer_message(row)}), 201
+    recipient_label = "faculty" if recipient.role == "faculty" else "student"
+    return jsonify({"message": f"Message sent to {recipient_label}.", "data": _serialize_faculty_peer_message(row)}), 201
 
 
 @preference_bp.route("/api/faculty/messages/inbox", methods=["GET"])
@@ -3234,7 +3507,7 @@ def get_faculty_peer_inbox():
     user = _get_current_user()
     if not user:
         return jsonify({"message": "Unauthorized"}), 401
-    if user.role != "faculty":
+    if user.role not in {"faculty", "student"}:
         return jsonify({"message": "Forbidden"}), 403
 
     rows = (
@@ -4302,6 +4575,7 @@ def create_faculty_assignment():
     department = (data.get("department") or user.department or "").strip() or None
     year = _parse_int(data.get("year"))
     section = (data.get("section") or "").strip() or None
+    classroom_id = _parse_int(data.get("classroom_id"))
     due_at = _parse_iso_datetime(data.get("due_at"))
     reminder_enabled = True
     try:
@@ -4326,6 +4600,19 @@ def create_faculty_assignment():
     if reminder_days_before < 0 or reminder_days_before > 14:
         return jsonify({"message": "reminder_days_before must be between 0 and 14"}), 400
 
+    classroom = None
+    if classroom_id is not None:
+        classroom = Classroom.query.get(classroom_id)
+        if not classroom or not classroom.is_active:
+            return jsonify({"message": "Classroom not found or inactive"}), 404
+        if classroom.faculty_id != user.id:
+            return jsonify({"message": "You can assign only within your own classroom"}), 403
+        subject = classroom.subject
+        semester = classroom.semester
+        department = classroom.department
+        year = classroom.year
+        section = classroom.section
+
     try:
         links = _parse_links_input(data.get("resource_links"))
     except ValueError as err:
@@ -4348,6 +4635,7 @@ def create_faculty_assignment():
 
     row = Assignment(
         created_by=user.id,
+        classroom_id=classroom.id if classroom else None,
         title=title,
         subject=subject,
         description=description,

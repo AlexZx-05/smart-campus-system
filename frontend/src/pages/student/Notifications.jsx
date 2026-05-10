@@ -121,6 +121,20 @@ function Notifications({ onJoinClassroomRequested }) {
           joinLink: msg.join_link || "",
         };
       }
+      if (msg?.kind === "assignment_notice") {
+        const dueText = msg.due_at ? new Date(msg.due_at).toLocaleString() : "N/A";
+        return {
+          id: `msg-${msg.id}`,
+          actorName: msg.sender_name || "Faculty",
+          actionText: "assigned a new assignment",
+          bodyText: `${msg.body || ""}\n\nPlease submit before ${dueText}.`,
+          createdAt: msg.created_at,
+          kind: "teacher",
+          typeLabel: "Assignment Notice",
+          subject: msg.subject || "",
+          assignmentId: msg.assignment_id,
+        };
+      }
       return {
         id: `msg-${msg.id}`,
         actorName: msg.sender_name || "Admin",

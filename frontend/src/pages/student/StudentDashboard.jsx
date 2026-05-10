@@ -10,7 +10,6 @@ import AcademicProgress from "./AcademicProgress";
 import Queries from "./Queries";
 import CalendarPage from "./CalendarPage";
 import Profile from "./Profile";
-import Settings from "./Settings";
 import ExamSchedule from "./ExamSchedule";
 import AttendanceDetails from "./AttendanceDetails";
 import CreditsDetails from "./CreditsDetails";
@@ -283,7 +282,6 @@ function StudentDashboard({ onLogout }) {
     { key: "queries", label: "Doubts / Queries" },
     { key: "calendar", label: "Calendar" },
     { key: "profile", label: "Profile" },
-    { key: "settings", label: "Settings" },
   ];
 
   const pageTitleMap = {
@@ -300,7 +298,6 @@ function StudentDashboard({ onLogout }) {
     "my-exams": "My Exams",
     calendar: "Calendar",
     profile: "Profile",
-    settings: "Settings",
   };
 
   const renderContent = () => {
@@ -320,6 +317,12 @@ function StudentDashboard({ onLogout }) {
             onOpenExams={() => setActivePage("my-exams")}
             onOpenAttendance={() => setActivePage("attendance-details")}
             onOpenCredits={() => setActivePage("credits-details")}
+            onOpenQueries={(focus) => {
+              try {
+                if (focus) sessionStorage.setItem("student_queries_focus", focus);
+              } catch (_) {}
+              setActivePage("queries");
+            }}
             upcomingExamCount={upcomingExamCount}
             joinedClassrooms={joinedClassrooms}
             courseEnrollments={courseEnrollments}
@@ -392,8 +395,6 @@ function StudentDashboard({ onLogout }) {
             }}
           />
         );
-      case "settings":
-        return <Settings onSettingsUpdated={setStudentSettings} />;
       default:
         return (
           <StudentOverview
@@ -409,6 +410,12 @@ function StudentDashboard({ onLogout }) {
             onOpenExams={() => setActivePage("my-exams")}
             onOpenAttendance={() => setActivePage("attendance-details")}
             onOpenCredits={() => setActivePage("credits-details")}
+            onOpenQueries={(focus) => {
+              try {
+                if (focus) sessionStorage.setItem("student_queries_focus", focus);
+              } catch (_) {}
+              setActivePage("queries");
+            }}
             upcomingExamCount={upcomingExamCount}
             joinedClassrooms={joinedClassrooms}
             courseEnrollments={courseEnrollments}

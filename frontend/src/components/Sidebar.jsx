@@ -179,15 +179,15 @@ function Sidebar({
 }) {
   return (
     <aside
-      className={`h-screen bg-slate-950 text-slate-200 px-2.5 py-2 md:px-3 md:py-2.5 shrink-0 overflow-hidden border-r border-slate-800 transition-all duration-300 flex flex-col ${
-        isOpen ? "w-[286px]" : "w-[84px]"
+      className={`h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-[#020a22] text-slate-200 px-2.5 py-2.5 md:px-3 md:py-3 shrink-0 overflow-hidden border-r border-slate-800/80 transition-all duration-300 flex flex-col ${
+        isOpen ? "w-[292px]" : "w-[86px]"
       }`}
     >
-      <div className={`px-1 py-1 ${isOpen ? "" : "flex flex-col items-center"}`}>
+      <div className={`px-1 py-1.5 ${isOpen ? "" : "flex flex-col items-center"}`}>
         <button
           type="button"
           onClick={onToggle}
-          className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-slate-500 hover:bg-slate-800 transition-colors ${
+          className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-600 bg-slate-900/90 text-slate-200 shadow-[0_6px_18px_-12px_rgba(14,165,233,0.55)] hover:text-white hover:border-cyan-400/60 hover:bg-slate-800 transition-all ${
             isOpen ? "" : "mb-2"
           }`}
           aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
@@ -198,18 +198,18 @@ function Sidebar({
         </button>
 
         {isOpen ? (
-          <div className="mt-2">
-            <h2 className="text-[30px] font-semibold text-white tracking-tight leading-none">Smart Campus</h2>
-            <p className="text-xs font-medium text-slate-400 mt-1 tracking-wide uppercase">{portalLabel}</p>
+          <div className="mt-2.5 rounded-2xl border border-slate-800/90 bg-slate-900/60 px-3.5 py-3 shadow-[inset_0_1px_0_rgba(148,163,184,0.08)]">
+            <h2 className="text-[36px] font-semibold text-white tracking-[-0.03em] leading-[0.95]">Smart Campus</h2>
+            <p className="text-[12px] font-semibold text-cyan-200/85 mt-1.5 tracking-[0.08em] uppercase">{portalLabel}</p>
           </div>
         ) : (
           <div className="h-2 w-2" />
         )}
       </div>
 
-      <nav className="scrollbar-hidden mt-2 flex-1 min-h-0 overflow-y-auto pr-0.5">
+      <nav className="scrollbar-hidden mt-3 flex-1 min-h-0 overflow-y-auto pr-0.5">
         {isOpen && (
-          <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+          <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400/75">
             Navigation
           </p>
         )}
@@ -224,13 +224,13 @@ function Sidebar({
               key={item.key}
               onClick={() => onPageChange(item.key)}
               title={!isOpen ? item.label : undefined}
-              className={`group relative w-full flex items-center rounded-xl text-[15px] transition-all ${
+              className={`group relative w-full flex items-center rounded-xl text-[15px] transition-all duration-200 ${
                 isActive
-                  ? "bg-gradient-to-r from-slate-800 to-slate-700 border border-slate-600 text-white shadow-md"
-                  : "text-slate-300 hover:text-white hover:bg-slate-900/90"
-              } ${isOpen ? "mb-1.5 min-h-11" : "mb-3.5"}`}
+                  ? "bg-gradient-to-r from-cyan-900/45 via-slate-800 to-slate-800 border border-cyan-400/40 text-white shadow-[0_10px_22px_-16px_rgba(34,211,238,0.7)]"
+                  : "text-slate-300 hover:text-white hover:bg-slate-900/90 hover:border hover:border-slate-700/70"
+              } ${isOpen ? "mb-1.5 min-h-11" : "mb-3"}`}
             >
-              {isActive && isOpen && <span className="absolute left-0 h-6 w-1 rounded-r-full bg-cyan-400" />}
+              {isActive && isOpen && <span className="absolute left-0 h-6 w-1 rounded-r-full bg-cyan-300 shadow-[0_0_14px_rgba(103,232,249,0.95)]" />}
               <span className={`relative inline-flex items-center ${isOpen ? "h-10 w-10 ml-1 justify-center" : "h-11 w-full justify-center"}`}>
                 <Icon />
                 {showBadge && !isOpen && (
@@ -243,7 +243,7 @@ function Sidebar({
                 )}
               </span>
               {isOpen && (
-                <span className="pr-3 truncate font-semibold tracking-tight">
+                <span className="pr-3 truncate font-semibold tracking-tight text-[15px] leading-none">
                   {item.label}
                   {showBadge && (
                     <span

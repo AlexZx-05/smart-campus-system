@@ -15,6 +15,7 @@ function StudentOverview({
   onOpenExams,
   onOpenAttendance,
   onOpenCredits,
+  onOpenQueries,
   upcomingExamCount = 0,
   joinedClassrooms = [],
   courseEnrollments = [],
@@ -86,6 +87,8 @@ function StudentOverview({
   const densityClass = settings.dashboardDensity === "compact" ? "space-y-3" : "space-y-5";
   const cardGap = settings.dashboardDensity === "compact" ? "gap-3" : "gap-4";
   const cardPadding = settings.dashboardDensity === "compact" ? "p-4" : "p-5";
+  const topStatsCount = settings.showAttendanceWidget ? 4 : 3;
+  const topStatsColsClass = topStatsCount === 4 ? "xl:grid-cols-4" : "xl:grid-cols-3";
   const effectiveAnnouncementCount = settings.emailNotifications ? unreadNotificationCount : 0;
   const computedCredits = (courseEnrollments?.length || 0) * 4;
 
@@ -113,36 +116,64 @@ function StudentOverview({
         emptyMessage="No student announcements yet."
       />
 
-      <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 ${cardGap}`}>
-        {settings.showAttendanceWidget && (
+      <div className={`grid grid-cols-1 xl:grid-cols-4 ${cardGap}`}>
+        <div className={`grid grid-cols-1 md:grid-cols-2 ${topStatsColsClass} xl:col-span-3 ${cardGap}`}>
+          {settings.showAttendanceWidget && (
+            <Card
+              title="Attendance"
+              value={`${data?.attendance_percentage ?? 0}%`}
+              subtitle="Current semester (click for details)"
+              onClick={onOpenAttendance}
+              className="border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-100/70 shadow-[0_18px_36px_-26px_rgba(5,150,105,0.45)]"
+            />
+          )}
           <Card
-            title="Attendance"
-            value={`${data?.attendance_percentage ?? 0}%`}
-            subtitle="Current semester (click for details)"
-            onClick={onOpenAttendance}
-            className="border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-teal-100/70 shadow-[0_18px_36px_-26px_rgba(5,150,105,0.45)]"
+            title="Credits Earned"
+            value={String(computedCredits)}
+            subtitle="Program progress: 160 credits required | View semester-wise breakdown"
+            onClick={onOpenCredits}
+            className="border-lime-200 bg-gradient-to-br from-white via-lime-50 to-emerald-100/70 shadow-[0_18px_36px_-26px_rgba(101,163,13,0.42)] hover:from-lime-50 hover:to-emerald-100/90"
           />
-        )}
-        <Card
-          title="Credits Completed"
-          value={String(computedCredits)}
-          subtitle="Out of 160 (click for semester-wise details)"
-          onClick={onOpenCredits}
-          className="border-lime-200 bg-gradient-to-br from-white via-lime-50 to-emerald-100/70 shadow-[0_18px_36px_-26px_rgba(101,163,13,0.42)]"
-        />
-        <Card
-          title="Classes Today"
-          value={String(todaySchedule.length || 0)}
-          subtitle="From your timetable"
-          className="border-amber-200 bg-gradient-to-br from-white via-amber-50 to-orange-100/70 shadow-[0_18px_36px_-26px_rgba(202,138,4,0.4)]"
-        />
-        <Card
-          title="Unread Notifications"
-          value={String(effectiveAnnouncementCount)}
-          subtitle={settings.emailNotifications ? "In your inbox" : "Disabled by settings"}
-          onClick={onOpenNotifications}
-          className="border-sky-200 bg-gradient-to-br from-white via-sky-50 to-cyan-100/70 shadow-[0_18px_36px_-26px_rgba(14,116,144,0.4)]"
-        />
+          <Card
+            title="Today’s Classes"
+            value={String(todaySchedule.length || 0)}
+            subtitle="Scheduled sessions from your active timetable"
+            className="border-amber-200 bg-gradient-to-br from-white via-amber-50 to-orange-100/70 shadow-[0_18px_36px_-26px_rgba(202,138,4,0.4)]"
+          />
+          <Card
+            title="Unread Updates"
+            value={String(effectiveAnnouncementCount)}
+            subtitle={settings.emailNotifications ? "Announcements, reminders, and teacher updates" : "Notifications are disabled in settings"}
+            onClick={onOpenNotifications}
+            className="border-sky-200 bg-gradient-to-br from-white via-sky-50 to-cyan-100/70 shadow-[0_18px_36px_-26px_rgba(14,116,144,0.4)] hover:from-sky-50 hover:to-cyan-100/90"
+          />
+        </div>
+
+        <div className={`rounded-2xl border border-cyan-200 bg-gradient-to-br from-white via-cyan-50 to-blue-100/70 shadow-[0_18px_38px_-28px_rgba(14,116,144,0.35)] p-4 xl:col-span-1`}>
+          <div className="flex h-full flex-col justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-cyan-700">Help Desk</p>
+              <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">Need Help Quickly?</h3>
+              <p className="mt-1 text-sm text-slate-600">Reach support or message your teacher directly from one place.</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => onOpenQueries?.("support")}
+                className="flex-1 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
+              >
+                Contact Support
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenQueries?.("teacher")}
+                className="flex-1 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-cyan-700"
+              >
+                Message Teacher
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className={`grid grid-cols-1 xl:grid-cols-3 ${cardGap}`}>
